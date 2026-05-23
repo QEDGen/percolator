@@ -6,21 +6,19 @@ license = "Apache-2.0"
 
 [lib]
 name = "percolator"
-path = "src/percolator.rs"
+path = "src/lib.rs"
 
 [dependencies]
-# No runtime dependencies - pure no_std compatible library
+bytemuck = { version = "1.23", default-features = false, features = ["derive"] }
 
 [dev-dependencies]
 proptest = "1.4"
 
 [features]
 default = []
-test = []  # MAX_ACCOUNTS=64 for tests
-stress = []  # Expose test_visible methods but keep MAX_ACCOUNTS=4096
+test = []  # Enable test-only harness configuration
+stress = []  # Reserved for stress/audit harnesses
 fuzz = ["test"]  # Enable fuzzing tests (includes test feature for test_visible helpers)
-small = []  # MAX_ACCOUNTS=256 for low-traffic markets
-medium = []  # MAX_ACCOUNTS=1024 for mid-range markets
 audit-scan = []  # Enable full account-table invariant scans on public exits
 
 [profile.release]
@@ -32,6 +30,12 @@ overflow-checks = true
 [profile.sbf]
 inherits = "release"
 panic = "abort"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(kani)',
+    'cfg(target_os, values("solana"))',
+] }
 
 [workspace.metadata.kani]
 flags = { tests = true }

@@ -1,12 +1,33 @@
 # Kani Proof Strength Audit Results
 
-Generated: 2026-05-11
+Generated: 2026-05-16
 
 Source prompt: `scripts/audit-proof-strength.md`.
 
-Kani version: `cargo-kani 0.66.0`.
+## Current Inventory
 
-## Full Kani Timing Sweep
+Static inventory from the current `v13` tree:
+
+| Item | Count |
+|---|---:|
+| Rust spec/fuzz tests | 108 |
+| Kani proofs | 103 |
+| Kani cover checks | 145 |
+| Kani assumptions | 86 |
+
+Breakdown:
+
+| File | Tests | Kani proofs | Cover checks |
+|---|---:|---:|---:|
+| `tests/v13_spec_tests.rs` | 107 | 0 | 0 |
+| `tests/v13_fuzzing.rs` | 1 | 0 | 0 |
+| `tests/proofs_v13.rs` | 0 | 96 | 137 |
+| `tests/proofs_v13_arithmetic.rs` | 0 | 7 | 8 |
+
+The v13 suite is over production engine code and shared production arithmetic
+helpers. It is not a model-only proof suite.
+
+## Latest Completed Full Kani Timing Sweep
 
 Command:
 
@@ -14,12 +35,12 @@ Command:
 scripts/run_kani_full_audit.sh
 ```
 
-The sweep script parsed every standard `#[kani::proof]` harness in
-`tests/proofs_*.rs` and ran each harness one-by-one with exact harness
-selection and a `600s` timeout.
+Last completed sweep date: 2026-05-15.
+
+That sweep covered the then-current 57-proof inventory:
 
 ```text
-SUMMARY: 416 passed, 0 failed/timeout (0 timeout) out of 416
+SUMMARY: 57 passed, 0 failed/timeout (0 timeout) out of 57
 ```
 
 Timing artifacts:
@@ -29,137 +50,164 @@ kani_audit_full.tsv
 kani_audit_final.tsv
 ```
 
-`kani_audit_full.tsv` contains the raw per-proof timing/status rows.
-`kani_audit_final.tsv` contains the same rows plus the sweep note
-`overnight-2026-05-11`.
-
-Aggregate timing:
+Aggregate timing from that completed sweep:
 
 | Metric | Value |
 |---|---:|
-| Harnesses | 416 |
-| Pass | 416 |
+| Harnesses | 57 |
+| Pass | 57 |
 | Fail | 0 |
 | Timeout | 0 |
-| Total wall-clock harness time | 10,876s |
-| Slowest harness | `proof_force_close_resolved_pos_count_decrements` |
-| Slowest harness time | 474s |
+| Total wall-clock harness time | 2372s |
+| Slowest harness | `proof_v13_bankrupt_liquidation_cannot_free_exposure_before_residual_durable` |
+| Slowest harness time | 397s |
 
-## Slowest Passing Harnesses
+The current tree has 103 Kani proofs, so the timing artifacts must be regenerated
+before using them as a current full-proof pass record.
 
-| Harness | Time |
-|---|---:|
-| `proof_force_close_resolved_pos_count_decrements` | 474s |
-| `proof_validate_hint_preflight_oracle_shift` | 466s |
-| `proof_permissionless_account_b_dispatch_returns_progress_for_hinted_blocker_on_prod_code` | 386s |
-| `t3_14_epoch_mismatch_forces_terminal_close` | 373s |
-| `proof_blocked_segment_recovery_rejects_when_bounded_accrual_can_progress_on_prod_code` | 308s |
-| `t3_16b_reset_counter_with_nonzero_k_diff` | 297s |
-| `t3_16_reset_pending_counter_invariant` | 286s |
-| `t6_26_full_drain_reset_regression` | 283s |
-| `proof_force_close_resolved_with_position_conserves` | 279s |
-| `proof_force_close_resolved_position_conservation` | 266s |
-| `v19_cascade_safety_gate_disabled_preserves_invariants` | 239s |
-| `proof_b7_oi_balance_after_trade` | 207s |
-| `proof_validate_hint_preflight_conservative` | 207s |
-| `proof_liquidation_policy_validity` | 168s |
-| `proof_bilateral_oi_decomposition` | 139s |
-| `t14_63_dust_bound_position_reattach_remainder` | 135s |
-| `proof_permissionless_account_b_progress_reduces_hinted_account_b_rank_on_prod_code` | 132s |
-| `proof_execute_trade_full_margin_enforcement` | 120s |
-| `t2_12_floor_shift_lemma` | 119s |
-| `proof_force_close_resolved_with_profit_conserves` | 114s |
-| `bounded_trade_conservation_symbolic_size` | 108s |
-| `proof_goal27_finalize_path_independent` | 100s |
-| `t3_14b_epoch_mismatch_with_nonzero_k_diff` | 82s |
-| `proof_account_b_recovery_rejects_when_production_chunk_advances` | 81s |
-| `bounded_trade_conservation` | 80s |
+## Slowest Harnesses From Last Completed Sweep
+
+All per-harness timings are recorded in `kani_audit_final.tsv`.
+
+| Harness | Time | Status |
+|---|---:|---|
+| `proof_v13_bankrupt_liquidation_cannot_free_exposure_before_residual_durable` | 397s | PASS |
+| `proof_v13_k_pair_mul_div_floor_matches_small_reference` | 193s | PASS |
+| `proof_v13_trade_fee_conservation_and_oi_symmetry` | 160s | PASS |
+| `proof_v13_sign_flip_trade_preserves_oi_symmetry_and_senior_accounting` | 150s | PASS |
+| `proof_v13_account_b_chunk_either_advances_or_fails_closed` | 125s | PASS |
+| `proof_v13_rebalance_reduce_position_preserves_senior_claims_and_reduces_risk` | 115s | PASS |
+| `proof_v13_hlock_allows_pure_risk_reducing_trade_with_principal_margin` | 109s | PASS |
+| `proof_v13_resolved_close_partial_b_settlement_makes_progress_without_closing` | 96s | PASS |
+| `proof_v13_risk_increasing_trade_requires_initial_health_before_mutation` | 82s | PASS |
+| `proof_v13_resolved_profit_close_pays_snapshot_residual_and_clears_claim` | 81s | PASS |
+| `proof_v13_bankrupt_liquidation_excludes_fee_from_residual_and_spends_insurance_once` | 70s | PASS |
+| `proof_v13_partial_liquidation_can_reduce_risk_without_forcing_full_close` | 64s | PASS |
+| `proof_v13_bankrupt_liquidation_consumes_insurance_before_social_loss` | 59s | PASS |
+| `proof_v13_permissionless_refresh_returns_partial_b_progress_without_accrual` | 50s | PASS |
+| `proof_v13_funding_accrual_refresh_matches_sign_and_floor` | 47s | PASS |
+| `proof_v13_price_accrual_refresh_matches_eager_mark_pnl` | 47s | PASS |
+| `proof_v13_wide_signed_mul_div_floor_matches_small_reference` | 47s | PASS |
+| `proof_v13_attach_then_clear_leg_restores_account_local_counters_for_long` | 44s | PASS |
+| `proof_v13_mul_div_ceil_u256_is_floor_plus_remainder_indicator` | 40s | PASS |
+| `proof_v13_b_residual_booking_makes_durable_progress_or_fails_closed` | 35s | PASS |
+
+## Spec Section 15 Traceability
+
+The current v13 source-of-truth spec requires the following proof/TDD coverage.
+Each item below maps to production-code tests, Kani proofs, or both.
+
+| Spec §15 item | Coverage |
+|---|---|
+| `unbounded_global_accounts_no_full_market_scan_required` | `v13_permissionless_crank_does_not_require_full_market_scan`; `proof_v13_permissionless_crank_does_not_require_full_market_scan` |
+| `full_account_refresh_is_O_N_and_required_for_favorable_actions` | `v13_favorable_action_requires_current_full_account_refresh`; `proof_v13_favorable_action_requires_current_full_refresh`; bounded `PortfolioLegV13` array coverage |
+| `hinted_subset_cannot_hide_toxic_leg` | `v13_trade_hint_cannot_hide_toxic_portfolio_leg_on_other_asset`; `proof_v13_trade_hint_cannot_hide_toxic_portfolio_leg_on_other_asset` |
+| `stale_certificate_loses_margin_credit` | `v13_full_refresh_clears_stale_certificate_but_not_b_stale_loss`; `proof_v13_full_refresh_clears_stale_certificate`; stale counter proofs |
+| `stale_profitable_leg_cannot_support_risk_increase` | stale certificate and full-refresh gating tests/proofs; target/effective lag and h-lock no-positive-credit trade proofs |
+| `rebalance_conserves_senior_claims` | `v13_rebalance_reduce_position_requires_strict_risk_progress_and_preserves_senior_claims`; `proof_v13_rebalance_reduce_position_preserves_senior_claims_and_reduces_risk` |
+| `rebalance_cannot_double_count_collateral` | `v13_cross_margin_collateral_counted_once_and_not_below_loss_envelope`; `proof_v13_cross_margin_equity_counts_collateral_once_and_score_uses_full_envelope` |
+| `cross_margin_offset_cap_never_below_loss_envelope` | `v13_cross_margin_collateral_counted_once_and_not_below_loss_envelope`; public config envelope proofs |
+| `unhealthy_rebalance_requires_strict_risk_progress` | `v13_rebalance_rejects_missing_or_zero_progress`; `proof_v13_liquidation_progress_rejects_non_reducing_scores`; rebalance risk-progress proof |
+| `cyclic_rescue_without_progress_reverts` | `v13_cyclic_rescue_without_scalar_progress_reverts`; non-progress liquidation/rebalance proofs |
+| `B_stale_blocks_withdraw_convert_close_and_risk_increase` | `v13_b_stale_blocks_refresh_and_favorable_actions_without_scanning_market`; `proof_v13_b_stale_blocks_refresh_and_favorable_actions` |
+| `account_B_settlement_chunks_huge_delta_without_market_scan` | `v13_account_b_chunk_makes_strict_account_local_progress_or_requires_recovery`; `proof_v13_account_b_chunk_either_advances_or_fails_closed` |
+| `B_booking_exact_remainder_conservation` | `v13_b_residual_booking_is_bounded_and_remainder_conserving`; `proof_v13_b_residual_booking_makes_durable_progress_or_fails_closed` |
+| `bankrupt_close_books_residual_without_opposing_scan` | bankrupt liquidation residual-durability tests/proofs; residual booking tests/proofs; no full-market scan crank proof |
+| `bankrupt_close_cannot_clear_basis_before_residual_durable` | `v13_bankrupt_liquidation_requires_residual_durable_before_freeing_exposure`; `proof_v13_bankrupt_liquidation_cannot_free_exposure_before_residual_durable` |
+| `staged_insurance_not_double_spent` | `v13_bankrupt_liquidation_consumes_insurance_before_social_loss`; `v13_bankrupt_liquidation_drops_uncollectible_fee_and_spends_insurance_once`; matching bankrupt-liquidation proofs |
+| `bankruptcy_residual_excludes_protocol_fees` | `v13_bankrupt_liquidation_drops_uncollectible_fee_and_spends_insurance_once`; `proof_v13_bankrupt_liquidation_excludes_fee_from_residual_and_spends_insurance_once` |
+| `uncollectible_fees_forgiven_not_socialized` | fee loss-seniority tests/proofs; wide fee sync test/proof; bankrupt liquidation fee-exclusion test/proof |
+| `account_free_equity_active_accrual_requires_protective_progress` | `v13_account_free_equity_active_accrual_requires_protective_progress`; `proof_v13_equity_active_accrual_requires_protective_progress` |
+| `effective_price_raw_target_lag_no_free_option` | target/effective lag trade, withdraw, and conversion tests; `proof_v13_target_effective_lag_rejects_risk_increasing_trade_before_mutation`; `proof_v13_target_effective_lag_blocks_pnl_conversion_before_mutation` |
+| `loss_stale_catchup_blocks_risk_increase_until_current` | `v13_loss_stale_blocks_nonflat_withdrawal_even_if_no_positive_credit_suffices`; `v13_loss_stale_allows_pure_risk_reducing_trade_path`; `proof_v13_loss_stale_blocks_nonflat_withdrawal` |
+| `resolved_close_one_account_bounded` | resolved flat/profit/active-position/partial-B tests; resolved close proofs |
+| `permissionless_recovery_no_caller_chosen_price` | `v13_permissionless_recovery_is_declared_by_reason_not_caller_price`; `proof_v13_permissionless_recovery_declares_reason_or_fails_closed`; recovery crank proof |
+| `explicit_loss_audit_overflow_does_not_trap_funds` | `v13_explicit_loss_audit_overflow_declares_recovery`; `proof_v13_explicit_loss_audit_overflow_declares_recovery_without_mutation` |
+| `authoritatively_flat_account_never_receives_B_loss` | `v13_authoritatively_flat_account_never_receives_b_loss`; `proof_v13_authoritatively_flat_account_never_receives_b_loss` |
+| `no_single_instruction_full_market_requirement` | no-slab v13 architecture; no full-market scan crank test/proof; account-local crank and refresh tests/proofs |
+| `worst_case_hinted_progress_totality` | `v13_worst_case_hinted_progress_actions_are_total_and_bounded`; `proof_v13_worst_case_hinted_progress_actions_are_total_and_bounded` |
+| `global_accumulator_not_account_health_proof` | `v13_global_residual_is_not_account_health_proof`; `proof_v13_global_residual_is_not_account_health_proof` |
+| `active_bitmap_canonical_no_hidden_legs` | `v13_active_bitmap_is_the_only_active_leg_authority`; `proof_v13_hidden_leg_rejected_by_bitmap_authority` |
+| `N_too_large_rejected_at_public_user_fund_init` | `v13_public_init_rejects_unbounded_portfolio_width`; `proof_v13_configured_portfolio_width_rejects_out_of_range_leg`; public config proof |
+
+No missing engine-side spec §15 coverage item was identified in this pass.
+
+Additional Anchor v2 zero-copy persistence coverage:
+
+| Property | Coverage |
+|---|---|
+| Persisted account/wire structs are `bytemuck::Pod` and `Zeroable` | `v13_persisted_account_wire_structs_are_bytemuck_pod` |
+| Persisted account/wire structs are byte-aligned and bytemuck-readable | `v13_persisted_account_wire_structs_are_bytemuck_pod`; `v13_persisted_account_wire_roundtrips_runtime_state` |
+| Persisted bool/enum/Option encodings fail closed | `v13_persisted_account_wire_rejects_invalid_bool_enum_and_option_encoding`; `proof_v13_persisted_wire_rejects_noncanonical_bool_enum_and_option` |
+| Runtime/persisted conversion preserves validated state | `v13_persisted_account_wire_roundtrips_runtime_state` |
+
+## V12 Property Migration
+
+The old v12 proof inventory had 416 Kani harnesses. Many were intentionally not
+ported because v13 removed the slab, fixed account capacity, full-market cursor
+scan, v12 reserve queues, and wrapper-era entrypoints. The applicable properties
+were migrated to v13 production-code tests/proofs.
+
+Migrated property families covered in the v13 suite:
+
+| v12 property family | v13 coverage |
+|---|---|
+| Deposit/withdraw accounting roundtrip | `proof_v13_deposit_then_withdraw_roundtrip_preserves_accounting`, `proof_v13_partial_withdraw_can_leave_small_remainder` |
+| Multiple deposits aggregate into senior totals | `proof_v13_multiple_deposits_aggregate_c_tot_and_vault` |
+| Account close/reclaim requires clean local state | `proof_v13_close_portfolio_account_requires_clean_local_state` |
+| Malformed signed fee-credit and PnL state fails closed | malformed account-shape tests/proofs and fee-credit/PnL proofs |
+| Conservative risk-notional arithmetic | `proof_v13_risk_notional_flat_zero_and_monotone_in_price` |
+| Shared wide arithmetic floor/ceil/K-diff semantics | `tests/proofs_v13_arithmetic.rs` |
+| Position bounds reject before OI mutation | `proof_v13_oversize_position_rejected_before_oi_mutation` |
+| Price/funding accrual matches eager account settlement | price and funding refresh tests/proofs |
+| Same-slot exposed price move cannot mutate state | `proof_v13_same_slot_exposed_price_move_rejects_before_mutation` |
+| Funding cap rejects before state mutation | `proof_v13_funding_rate_above_cap_rejects_before_mutation` |
+| Dynamic trade-fee cap, conservation, and OI symmetry | dynamic fee tests/proofs and trade conservation proofs |
+| Invalid/risk-increasing trade rejects before mutation | invalid trade, health, h-lock, and target/effective lag tests/proofs |
+| Sign-flip trades preserve OI symmetry and senior totals | sign-flip trade tests/proofs |
+| Released PnL conversion cannot mint beyond residual | released-PnL conversion tests/proofs |
+| Permissionless refresh must return partial B progress | permissionless partial-B refresh tests/proofs |
+| Public user-fund config must keep recovery/profile guarantees enabled | public config tests/proofs |
+| Liquidation must strictly improve account risk and preserve residual durability | liquidation progress, partial liquidation, bankrupt residual, and fee-exclusion tests/proofs |
+| Resolved close payout/progress behavior | resolved flat, positive, fee-current, partial-B, and active-position tests/proofs |
 
 ## Static Strength Scan
-
-The static pass scanned the same 416-harness inventory for common weakness and
-vacuity patterns from `scripts/audit-proof-strength.md`.
-
-Inventory by file:
-
-| File | Harnesses |
-|---|---:|
-| `tests/proofs_admission.rs` | 63 |
-| `tests/proofs_arithmetic.rs` | 19 |
-| `tests/proofs_audit.rs` | 33 |
-| `tests/proofs_b_index.rs` | 21 |
-| `tests/proofs_checklist.rs` | 16 |
-| `tests/proofs_instructions.rs` | 58 |
-| `tests/proofs_invariants.rs` | 26 |
-| `tests/proofs_lazy_ak.rs` | 15 |
-| `tests/proofs_liveness.rs` | 41 |
-| `tests/proofs_safety.rs` | 99 |
-| `tests/proofs_v1131.rs` | 25 |
 
 Strength indicators:
 
 | Check | Result |
 |---|---:|
-| Harnesses with symbolic inputs or symbolic helper construction | 233 |
-| Constructed concrete production-code scenario harnesses | 183 |
-| Harnesses with `kani::cover!` reachability checks | 140 |
-| Harnesses without `kani::cover!` | 276 |
+| Harnesses over v13 production transitions | 96 |
+| Harnesses over shared production arithmetic helpers | 7 |
+| Harnesses with `kani::cover!` reachability checks | 96 |
 | Explicit `kani::assume(false)` / `assume(false)` findings | 0 |
-| Heuristic Ok-gated assertion findings without cover/unwrap/expect | 0 |
-| Heuristic Err-early-return findings | 0 |
-
-Five harnesses did not contain ordinary assertion/unwrap/cover patterns, but
-all five are intentional `#[kani::should_panic]` invalid-configuration proofs:
-
-```text
-proof_config_rejects_oversized_max_accounts
-proof_config_rejects_zero_max_accounts
-proof_config_rejects_invalid_bps
-proof_config_rejects_liq_fee_inversion
-proof_config_rejects_fee_cap_exceeds_max
-```
+| Confirmed vacuous harnesses | 0 |
+| Confirmed weak harnesses | 0 |
 
 Current classification:
 
 | Classification | Status |
 |---|---|
-| Non-vacuity | No confirmed vacuous harnesses found in this static pass. |
-| Weak proofs | No confirmed weak proofs found by the static patterns checked. |
-| Inductive strength | The suite is not a fully inductive proof system over arbitrary symbolic `RiskEngine` states. Many harnesses are constructed production-code regression/spec proofs. |
-| Practical proof boundary | The current suite is strong as a production-code safety/liveness regression suite, with many symbolic inputs and reachability checks, but it should not be described as proving every invariant for all possible corrupt arbitrary states. |
+| Non-vacuity | No confirmed vacuous harnesses found. Cover checks exercise h-min/h-max, stale set/clear, hidden-leg rejection, B-chunk progress paths, malformed fee-credit states, invalid config branches, aggregate deposit branches, arithmetic floor/ceil branches, positive/negative K-diff branches, bankrupt residual recovery, zero/partial insurance paths, permissionless partial-B refresh, released-PnL zero/positive conversion paths, resolved partial-B close progress, and rebalance reduction paths. |
+| Weak proofs | No confirmed weak proofs in the v13 inventory. Concrete-branch harnesses are intentional regression proofs over production methods, and symbolic arithmetic/transition harnesses cover the remaining branch families. |
+| Inductive strength | The stale-counter and arithmetic helper proofs are closest to local inductive transition proofs. The overall suite is a strong production-code safety/liveness harness set, not a complete arbitrary-state inductive proof of the whole engine. |
+| Practical proof boundary | The suite proves key v13 account-local invariants over real production methods: h-lock selection, provenance/hidden-leg fail-closed behavior, stale counter idempotence and refresh clearing, malformed signed state rejection, deposit/withdraw accounting, aggregate senior accounting, close-account local-state gating, risk-notional monotonicity, position-bound fail-before-mutation, B-chunk progress/fail-closed behavior, full-refresh gating, monotonic liquidation-score rejection, loss-before-fee ordering, account-free equity-active accrual protective-progress gating, one-segment bounded catchup, funding-rate cap fail-before-mutation, dynamic trade-fee enforcement, trade conservation/OI symmetry, target/effective lag risk-increase rejection, h-lock risk-increase rejection, h-lock risk-reducing liveness under no-positive-credit margin, h-lock withdrawal no-positive-credit gating, released-PnL conversion bounded by residual, loss-stale nonflat withdrawal blocking, bankrupt liquidation insurance-before-social-loss ordering, bankrupt residual durability before exposure release, uncollectible liquidation-fee exclusion from residual loss, resolved close liveness and payout shape, durable B residual booking, prior-epoch reset clearing, quantity-ADL OI symmetry, rebalance strict risk-progress, price/funding settlement, invalid trade rollback, partial liquidation, and shared wide arithmetic semantics. |
 
 ## Rust Test Matrix
 
-Plain `cargo test` currently fails before executing tests because of the
-pre-existing untracked scratch file `examples/dump_layout.rs`, which references
-the removed `trading_fee_bps` field. That file is not part of the tracked audit
-artifacts and was not modified by this run.
-
-The tracked lib/test suite was run directly across the supported feature
-profiles:
-
-| Command | Result | Time |
-|---|---|---:|
-| `cargo test --lib --tests` | PASS | 0.070s |
-| `cargo test --lib --tests --features small -q` | PASS | 0.583s |
-| `cargo test --lib --tests --features medium -q` | PASS | 0.578s |
-| `cargo test --lib --tests --features test -q` | PASS | 0.406s |
-
-The `test` feature run executed the larger tracked test set:
-
-```text
-50 lib tests passed
-3 AMM tests passed
-368 unit tests passed
-```
+| Command | Result |
+|---|---|
+| `cargo test` | PASS on 2026-05-16 |
+| `cargo test --features test` | PASS on 2026-05-16 |
+| `cargo test --features fuzz` | PASS on 2026-05-16 |
 
 ## Audit Conclusion
 
-All 416 Kani proofs passed within the 10-minute per-harness cap, with timings
-recorded in the checked-in TSV artifacts. The static proof-strength scan found
-no confirmed vacuous or weak harnesses under the checked patterns.
+No missing engine-side v13 spec §15 coverage item was identified. No confirmed
+weak or vacuous proof was identified in the current static pass. Applicable v12
+property families have been reviewed and either ported to v13 production-code
+tests/proofs or retired as slab/wrapper/v12-queue-specific.
 
-The main limitation is proof style, not current pass/fail health: a substantial
-part of the suite is made of concrete or semi-concrete production-code scenario
-proofs. Those are useful and non-vacuous for the intended spec regressions, but
-they are not equivalent to fully inductive arbitrary-state invariant proofs.
+The only open audit-maintenance item is to rerun `scripts/run_kani_full_audit.sh`
+against the current 103-proof inventory and replace the older 57-proof timing
+artifacts.
