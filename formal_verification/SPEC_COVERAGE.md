@@ -53,7 +53,9 @@ Strength (is the coverage symbolic ∀ or concrete-input?):
   WEAK:   26 invariants (all cited harnesses are concrete-input — fixed fixtures, no symbolic state)
   N/A:    5 invariants (no harnesses to grade — see Confidence: NONE)
 
-Lean coverage (Phase 1 of VERIFICATION_PLAN.md, complete):
+Lean coverage (Phase 1 + Phase 2 of VERIFICATION_PLAN.md, complete):
+
+Phase 1 — arithmetic refinements:
   Percolator/WideMath.lean   — wideningMulU128_correct + 4 corollaries
   Percolator/U256.lean       — toNat_lt, toNat_mul, both_hi_nonzero_overflows,
                                checkedMul_both_hi_zero, checkedMul_correct,
@@ -64,8 +66,23 @@ Lean coverage (Phase 1 of VERIFICATION_PLAN.md, complete):
   Percolator/CreditRate.lean — 7 theorems closing §14 #42, parts of #1 and #50
   Percolator/BoundArith.lean — 8 theorems closing §14 #15
 
-Refinement proptests (tests/proofs_v16_lean_refinement.rs) bridge each Lean
-theorem to the production Rust impl:
+Phase 2 — structural invariants via dependent types:
+  Percolator/Lifecycle.lean  — Side, SideMode, AssetLifecycle, MarketMode,
+                               BackingBucketStatus, BackingSource enums +
+                               inductive .Step transition relations
+  Percolator/Lien.lean       — Lien indexed by BackingSource (closes §14 #23
+                               structurally); LienedAmountsBySource with
+                               counterparty+insurance partition
+  Percolator/ValueFlow.lean  — TokenValueFlow as list of TokenValueRow, each
+                               row carries one debit/credit/amount triple, so
+                               §14 #2 (total_debit = total_credit) is `rfl`
+  Percolator/State.lean      — AssetState (B-index lives here only — §14 #57),
+                               PortfolioLeg, PortfolioAccount.legs as
+                               AssetSlot→Option PortfolioLeg (closes §14 #87),
+                               MarketGroup; PerSide for long/short symmetry
+
+Refinement proptests (tests/proofs_v16_lean_refinement.rs) bridge each Phase 1
+Lean theorem to the production Rust impl:
   u256_checked_mul_matches_biguint_spec
   mul_div_floor_u256_matches_biguint_spec_u128_inputs
   div_rem_u256_matches_biguint_spec
@@ -73,6 +90,28 @@ theorem to the production Rust impl:
   i256_abs_u256_matches_bigint_spec
   i256_checked_mul_matches_bigint_spec
 ```
+
+Phase 2 §14 closures by structural typing (no proofs — violations don't
+typecheck or aren't expressible):
+
+  #2  token_value_flow_proof_every_quote_atom_has_one_debit_and_one_credit
+      Closed by `Percolator/ValueFlow.lean`: `TokenValueRow` carries a single
+      amount that is both debited and credited; `totalDebit = totalCredit` is
+      definitional equality.
+  #23 lien_never_both_support_and_insurance
+      Closed by `Percolator/Lien.lean`: `Lien` is indexed by `BackingSource`,
+      so `Lien Counterparty` and `Lien Insurance` are distinct types. Aggregate
+      `SourceCreditLienAggregate` holds them in separately-typed fields. No
+      expression can construct a lien that is both.
+  #57 no_global_B_index
+      Closed by `Percolator/State.lean`: `bNum` fields live exclusively inside
+      `AssetState`. `MarketGroup` exposes `bNum slot side` only as a
+      derivation through `assets`, structurally per-asset.
+  #87 canonical_single_leg_per_asset
+      Closed by `Percolator/State.lean`: `PortfolioAccount.legs : Nat →
+      Option PortfolioLeg` is a finite map; at most one leg per slot is the
+      function-type signature. `leg_unique_per_slot` witnesses the trivial
+      Option uniqueness.
 
 The two axes answer different questions. **Confidence** says whether a harness exists that
 *claims* to prove the invariant. **Strength** says whether the harness is doing symbolic
