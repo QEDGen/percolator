@@ -1146,9 +1146,9 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Note:** the "realizable backing" half of this invariant — that `available_backing_num_for_source_credit_state` correctly aggregates only realizable buckets — is operational, not arithmetic, and stays in Kani harnesses for now.
 **Kani harnesses (concrete sanity):**
 - `proof_v16_source_credit_rate_is_bounded_by_available_backing` `[SEMI]` — Rust impl at three backing regimes.
-- `proof_v16_account_source_claim_equity_zero_backing_gives_zero_credit` `[CON]` — zero-backing fixture.
-- `proof_v16_account_source_claim_equity_full_backing_gives_full_credit` `[CON]` — full-backing fixture.
-- `proof_v16_account_source_claim_equity_uses_source_credit_rate` `[CON]` — account-level equity scales by the rate.
+- `proof_v16_source_domain_realizable_support_zero_backing_gives_zero_credit` `[CON]` — zero-backing fixture.
+- `proof_v16_source_domain_realizable_support_full_backing_gives_full_credit` `[CON]` — full-backing fixture.
+- `proof_v16_source_domain_realizable_support_uses_source_credit_rate` `[CON]` — account-level equity scales by the rate.
 
 ### #2. `token_value_flow_proof_every_quote_atom_has_one_debit_and_one_credit`
 **Confidence:** HIGH
@@ -1163,7 +1163,7 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Strength:** MEDIUM
 **Harnesses:**
 - `proof_v16_source_lien_creation_has_valid_reservation_encumbrance_proof` `[CON]` — emits validated reservation encumbrance proof distinct from value flow.
-- `proof_v16_counterparty_lien_lifecycle_preserves_backing_encumbrance` `[SEMI]` — backing encumbrance moves on lien lifecycle without touching value totals.
+- `proof_v16_counterparty_lien_consume_preserves_backing_encumbrance` + `proof_v16_counterparty_lien_impair_preserves_backing_encumbrance` `[SEMI]` — backing encumbrance moves on lien lifecycle without touching value totals.
 - **Lean closure**: `ReservationEncumbrance.lean::ReservationEncumbranceProof`
   is a record carrying *only* reservation/backing counters (no
   `debits` / `credits` / `externalQuote*` fields). The structural
@@ -1180,7 +1180,7 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Confidence:** HIGH
 **Strength:** MEDIUM
 **Harnesses:**
-- `proof_v16_counterparty_lien_lifecycle_preserves_backing_encumbrance` `[SEMI]` — lien create/consume/impair holds `vault` constant; only reservation counters move.
+- `proof_v16_counterparty_lien_consume_preserves_backing_encumbrance` + `proof_v16_counterparty_lien_impair_preserves_backing_encumbrance` `[SEMI]` — lien create/consume/impair holds `vault` constant; only reservation counters move.
 - `proof_v16_public_withdraw_locks_claim_and_backing_when_positive_credit_is_required` `[CON]` — lien creation via withdraw does not move quote.
 
 ### #5. `stock_reconciliation_holds_at_genesis_activation_mode_transition_and_recovery`
@@ -1197,7 +1197,7 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Strength:** MEDIUM
 **Harnesses:**
 - `proof_v16_source_credit_rate_is_bounded_by_available_backing` `[SEMI]` — credit is bounded by available backing irrespective of claim magnitude.
-- `proof_v16_expired_fresh_backing_requires_refresh_before_source_credit_conversion` `[CON]` — stale backing blocks oracle-driven credit growth.
+- `proof_v16_expired_fresh_backing_stale_cert_blocks_source_credit_conversion` `[CON]` — stale backing blocks oracle-driven credit growth.
 **Note:** No harness directly stress-tests an oracle pump producing claim growth without matching backing, but the rate cap rules it out.
 - **Lean closure**: `OraclePumpLimit.lean::realized_credit_bounded_by_backing`
   proves `(creditRateNum × claim) / CREDIT_RATE_SCALE ≤ available`
@@ -1212,8 +1212,8 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Confidence:** HIGH
 **Strength:** WEAK
 **Harnesses:**
-- `proof_v16_expired_fresh_backing_requires_refresh_before_source_credit_conversion` `[CON]` — stale fresh backing forces `Err(Stale)` on conversion.
-- `proof_v16_account_source_claim_equity_zero_backing_gives_zero_credit` `[CON]` — exhausted backing produces zero credit rate.
+- `proof_v16_expired_fresh_backing_stale_cert_blocks_source_credit_conversion` `[CON]` — stale fresh backing forces `Err(Stale)` on conversion.
+- `proof_v16_source_domain_realizable_support_zero_backing_gives_zero_credit` `[CON]` — exhausted backing produces zero credit rate.
 
 ### #8. `risk_increasing_trade_requires_source_credit_lien`
 **Confidence:** HIGH
@@ -1243,13 +1243,13 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Strength:** MEDIUM
 **Harnesses:**
 - `proof_v16_full_refresh_reserves_counterparty_backing_from_new_capital_backed_loss` `[CON]` — backing reservation comes from real loss-bearing capital, not a certificate.
-- `proof_v16_counterparty_lien_lifecycle_preserves_backing_encumbrance` `[SEMI]` — `fresh_reserved_backing_num` mirrors true locked equity through lifecycle.
+- `proof_v16_counterparty_lien_consume_preserves_backing_encumbrance` + `proof_v16_counterparty_lien_impair_preserves_backing_encumbrance` `[SEMI]` — `fresh_reserved_backing_num` mirrors true locked equity through lifecycle.
 
 ### #12. `backing_expiry_buckets_exclude_stale_contributions_without_full_scan`
 **Confidence:** MEDIUM
 **Strength:** STRONG
 **Harnesses:**
-- `proof_v16_expired_fresh_backing_requires_refresh_before_source_credit_conversion` `[CON]` — expired backing excluded from credit conversion.
+- `proof_v16_expired_fresh_backing_stale_cert_blocks_source_credit_conversion` `[CON]` — expired backing excluded from credit conversion.
 - `proof_v16_permissionless_crank_does_not_require_full_market_scan` `[SYM]` — bounded-work crank does not scan all accounts.
 **Note:** No direct harness on `backing_expiry_buckets` data structure; coverage is by observable effect.
 - **Lean closure**: `BoundedExpiryScan.lean::stale_excluded_by_local_check`
@@ -1375,7 +1375,7 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Strength:** MEDIUM
 **Harnesses:**
 - `proof_v16_insurance_source_credit_lien_aggregate_tracks_account_backing_split` `[CON]` — aggregate proof partitions face-claim locked between counterparty and insurance categories.
-- `proof_v16_dead_leg_forfeit_books_loss_to_opposing_domain_only` `[SEMI]` — loss attribution is disjoint.
+- `proof_v16_dead_leg_forfeit_books_one_loss_atom_to_opposing_domain_only` + `proof_v16_dead_leg_forfeit_books_four_loss_atoms_to_opposing_domain_only` `[SEMI]` — loss attribution is disjoint.
 **Note:** The dual-counting prohibition is shown structurally by the partitioned aggregate; no harness exhibits a specific double-classification attempt.
 
 ### #24. `close_residual_partition_classifies_counterparty_and_insurance_lien_consumption_disjointly`
@@ -1417,7 +1417,7 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Confidence:** MEDIUM
 **Strength:** MEDIUM
 **Harnesses:**
-- `proof_v16_counterparty_lien_lifecycle_preserves_backing_encumbrance` `[SEMI]` — bucket helper invariants hold.
+- `proof_v16_counterparty_lien_consume_preserves_backing_encumbrance` + `proof_v16_counterparty_lien_impair_preserves_backing_encumbrance` `[SEMI]` — bucket helper invariants hold.
 - `proof_v16_insurance_reservation_lifecycle_preserves_encumbrance` `[SEMI]` — insurance helper invariants hold.
 
 ### #30. `insurance_backed_lien_create_consume_release_impair_conserves_canonical_ledger`
@@ -1444,7 +1444,7 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Confidence:** MEDIUM
 **Strength:** MEDIUM
 **Harnesses:**
-- `proof_v16_counterparty_lien_lifecycle_preserves_backing_encumbrance` `[SEMI]` — counterparty lifecycle matches predicate.
+- `proof_v16_counterparty_lien_consume_preserves_backing_encumbrance` + `proof_v16_counterparty_lien_impair_preserves_backing_encumbrance` `[SEMI]` — counterparty lifecycle matches predicate.
 - `proof_v16_insurance_reservation_lifecycle_preserves_encumbrance` `[SEMI]` — insurance lifecycle matches predicate.
 **Note:** Mostly a restatement of #29; same harnesses apply.
 
@@ -1452,14 +1452,14 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Confidence:** LOW
 **Strength:** WEAK
 **Harnesses:**
-- `proof_v16_expired_fresh_backing_requires_refresh_before_source_credit_conversion` `[CON]` — expiry path is observed without underflow.
+- `proof_v16_expired_fresh_backing_stale_cert_blocks_source_credit_conversion` `[CON]` — expiry path is observed without underflow.
 **Note:** No harness directly exercises the `expire_backing_bucket` helper edge cases.
 
 ### #35. `backing_bucket_expiry_does_not_increase_available_backing_or_credit_rate`
 **Confidence:** LOW
 **Strength:** WEAK
 **Harnesses:**
-- `proof_v16_expired_fresh_backing_requires_refresh_before_source_credit_conversion` `[CON]` — credit rate after expiry does not exceed pre-expiry rate.
+- `proof_v16_expired_fresh_backing_stale_cert_blocks_source_credit_conversion` `[CON]` — credit rate after expiry does not exceed pre-expiry rate.
 **Note:** Same caveat as #34.
 
 ### #36. `backing_bucket_expiry_after_partial_lien_consumption_does_not_inflate_available`
@@ -1472,13 +1472,13 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Confidence:** HIGH
 **Strength:** MEDIUM
 **Harnesses:**
-- `proof_v16_counterparty_lien_lifecycle_preserves_backing_encumbrance` `[SEMI]` — consume branch decrements `valid_liened_backing_num` exactly once.
+- `proof_v16_counterparty_lien_consume_preserves_backing_encumbrance` `[SEMI]` — consume branch decrements `valid_liened_backing_num` exactly once.
 
 ### #38. `lien_consumption_removes_backing_from_fresh_reserved_and_claim_bound`
 **Confidence:** MEDIUM
 **Strength:** MEDIUM
 **Harnesses:**
-- `proof_v16_counterparty_lien_lifecycle_preserves_backing_encumbrance` `[SEMI]` — consume reduces `fresh_reserved_backing_num` by `lien` and sets `spent_backing_num = lien`.
+- `proof_v16_counterparty_lien_consume_preserves_backing_encumbrance` `[SEMI]` — consume reduces `fresh_reserved_backing_num` by `lien` and sets `spent_backing_num = lien`.
 - `proof_v16_passive_backing_consumption_preserves_senior_accounting_without_wrapper_injection` `[CON]` — consumption deducts from claim bound.
 
 ### #39. `lien_release_moves_valid_liened_to_fresh_unliened_without_changing_fresh_reserved`
@@ -1493,7 +1493,7 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Strength:** MEDIUM
 **Harnesses:**
 - `proof_v16_source_credit_rate_is_bounded_by_available_backing` `[SEMI]` — uses `source_credit_available_backing_num(0)` which is recomputed.
-- `proof_v16_counterparty_lien_lifecycle_preserves_backing_encumbrance` `[SEMI]` — bucket-sum recomputation observed.
+- `proof_v16_counterparty_lien_consume_preserves_backing_encumbrance` + `proof_v16_counterparty_lien_impair_preserves_backing_encumbrance` `[SEMI]` — bucket-sum recomputation observed.
 
 ### #41. `expired_liened_bucket_marks_liens_impaired_in_bounded_work`
 **Confidence:** MEDIUM
@@ -1513,7 +1513,7 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 - `creditRateNum_zero_claim` — boundary: zero claim ⇒ full credit.
 **Kani harnesses (concrete sanity):**
 - `proof_v16_source_credit_rate_is_bounded_by_available_backing` `[SEMI]` — concrete-input sanity check that the Rust impl matches the Lean spec at three regimes.
-- `proof_v16_account_source_claim_equity_zero_backing_gives_zero_credit` `[CON]` — Rust impl at the zero-backing fixture.
+- `proof_v16_source_domain_realizable_support_zero_backing_gives_zero_credit` `[CON]` — Rust impl at the zero-backing fixture.
 
 ### #43. `lien_creation_requires_required_backing_le_available_backing`
 **Confidence:** HIGH
@@ -1565,7 +1565,7 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Confidence:** LOW
 **Strength:** MEDIUM
 **Harnesses:**
-- `proof_v16_account_source_claim_equity_uses_source_credit_rate` `[CON]` — formula applied at account level.
+- `proof_v16_source_domain_realizable_support_uses_source_credit_rate` `[CON]` — formula applied at account level.
 - `proof_v16_public_invariants_reject_scaled_junior_bound_cache_mismatch` `[SEMI]` — cached scaled bound must match formula.
 **Note:** No harness targets the bucket-formula's lower-bound property directly.
 
@@ -1646,7 +1646,7 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Harnesses:**
 - `proof_v16_long_liquidation_residual_charges_short_domain` `[CON]` — long-side residual charges short domain.
 - `proof_v16_short_liquidation_residual_charges_long_domain` `[CON]` — short-side residual charges long domain.
-- `proof_v16_dead_leg_forfeit_books_loss_to_opposing_domain_only` `[SEMI]` — dead-leg equivalent.
+- `proof_v16_dead_leg_forfeit_books_one_loss_atom_to_opposing_domain_only` + `proof_v16_dead_leg_forfeit_books_four_loss_atoms_to_opposing_domain_only` `[SEMI]` — dead-leg equivalent.
 
 ### #57. `no_global_B_index`
 **Confidence:** MEDIUM
@@ -1681,15 +1681,15 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Confidence:** HIGH
 **Strength:** MEDIUM
 **Harnesses:**
-- `proof_v16_health_certificate_bound_to_market_epochs_and_prices` `[SEMI]` — certs scoped to epochs; mismatch fails closed.
-- `proof_v16_full_refresh_clears_stale_certificate` `[CON]` — full refresh required.
+- `proof_v16_b_stale_invalidates_prior_health_certificate` + `proof_v16_same_epoch_full_refresh_is_idempotent_after_price_down_settlement` + `proof_v16_same_epoch_full_refresh_is_idempotent_after_price_up_settlement` `[SEMI]` — certs scoped to epochs and prices; b-stale invalidates prior cert (mismatch fails closed); same-epoch refresh idempotence binds cert to price settlements.
+- `proof_v16_favorable_action_accepts_current_full_refresh_certificate` + `proof_v16_favorable_action_rejects_stale_full_refresh_certificate` + `proof_v16_stale_clear_plus_current_certificate_restores_favorable_action_lane` `[CON]` — full refresh required (accept current / reject stale / stale-clear + current cert restores favorable-action lane).
 
 ### #62. `full_account_refresh_required_for_favorable_actions`
 **Confidence:** HIGH
 **Strength:** MEDIUM
 **Harnesses:**
-- `proof_v16_favorable_action_requires_current_full_refresh` `[CON]` — direct claim.
-- `proof_v16_health_certificate_bound_to_market_epochs_and_prices` `[SEMI]` — cert binding.
+- `proof_v16_favorable_action_accepts_current_full_refresh_certificate` + `proof_v16_favorable_action_rejects_stale_full_refresh_certificate` `[CON]` — direct claim (accept current / reject stale).
+- `proof_v16_b_stale_invalidates_prior_health_certificate` `[SEMI]` — cert binding (b-stale invalidates prior cert).
 - `proof_v16_favorable_locks_block_released_pnl_conversion_before_mutation` `[SEMI]` — locks block favorable actions.
 - **Lean closure**: `FavorableActions.lean::FavorableActionKind.tryExecute`
   matches on the snapshot's `refresh : RefreshStatus` field and
@@ -1728,7 +1728,7 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Confidence:** LOW
 **Strength:** MEDIUM
 **Harnesses:**
-- `proof_v16_b_residual_booking_makes_durable_progress_or_fails_closed` `[SEMI]` — booking is bounded and durable.
+- `proof_v16_b_residual_booking_positive_makes_durable_progress` + `proof_v16_b_residual_booking_zero_noops` `[SEMI]` — booking is bounded and durable.
 **Note:** Big-O complexity is not explicitly modeled; Kani's `unwind` bound implies boundedness.
 - **Lean closure**: `AggregateDriftCredit.lean::DriftCreditAggregate`
   is a single-Nat record. `read : DriftCreditAggregate → Nat` is
@@ -1783,14 +1783,14 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Strength:** MEDIUM
 **Harnesses:**
 - `proof_v16_account_b_booking_advances_close_progress_or_fails_closed` `[SEMI]` — progress strictly advances or fails.
-- `proof_v16_b_residual_booking_makes_durable_progress_or_fails_closed` `[SEMI]` — durable progress invariant.
+- `proof_v16_b_residual_booking_positive_makes_durable_progress` + `proof_v16_b_residual_booking_zero_noops` `[SEMI]` — durable progress invariant.
 
 ### #72. `cure_and_cancel_checks_before_consuming_new_deposit`
 **Confidence:** HIGH
 **Strength:** MEDIUM
 **Harnesses:**
-- `proof_v16_cure_and_cancel_close_releases_barrier_and_escrow_before_irreversible_progress` `[SEMI]` — happy path.
-- `proof_v16_cure_and_cancel_rejects_irreversible_progress_before_deposit_mutation` `[SEMI]` — rejection path leaves deposit untouched.
+- `proof_v16_cure_and_cancel_close_deposits_fresh_escrow_before_irreversible_progress` + `proof_v16_cure_and_cancel_close_releases_existing_escrow_before_irreversible_progress` `[SEMI]` — happy path (fresh-deposit and release-existing variants).
+- `proof_v16_cure_and_cancel_rejects_b_progress_before_deposit_mutation` + `proof_v16_cure_and_cancel_rejects_drift_progress_before_deposit_mutation` + `proof_v16_cure_and_cancel_rejects_explicit_loss_progress_before_deposit_mutation` + `proof_v16_cure_and_cancel_rejects_insurance_progress_before_deposit_mutation` + `proof_v16_cure_and_cancel_rejects_quantity_adl_progress_before_deposit_mutation` + `proof_v16_cure_and_cancel_rejects_support_progress_before_deposit_mutation` `[SEMI]` — rejection path leaves deposit untouched for any in-flight progress type (b/drift/explicit-loss/insurance/quantity-adl/support).
 
 ### #73. `quantity_adl_and_account_finalization_atomic_or_barriered`
 **Confidence:** HIGH
@@ -1810,9 +1810,9 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Confidence:** HIGH
 **Strength:** MEDIUM
 **Harnesses:**
-- `proof_v16_account_b_chunk_either_advances_or_fails_closed` `[SEMI]` — exact conservation per chunk.
+- `proof_v16_account_b_chunk_current_noops` + `proof_v16_account_b_chunk_positive_budget_advances` + `proof_v16_account_b_chunk_zero_budget_fails_closed` `[SEMI]` — exact conservation per chunk (noop / advance / fail-closed cases).
 - `proof_v16_repeated_account_b_chunks_complete_bounded_small_residual` `[SEMI]` — repeated chunks complete with bounded remainder.
-- `proof_v16_b_residual_booking_makes_durable_progress_or_fails_closed` `[SEMI]` — B residual booking exactness.
+- `proof_v16_b_residual_booking_positive_makes_durable_progress` + `proof_v16_b_residual_booking_zero_noops` `[SEMI]` — B residual booking exactness.
 
 ### #76. `zero_weight_domain_residual_cannot_clear_without_backing`
 **Confidence:** HIGH
@@ -1897,7 +1897,7 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Confidence:** HIGH
 **Strength:** MEDIUM
 **Harnesses:**
-- `proof_v16_dead_leg_forfeit_books_loss_to_opposing_domain_only` `[SEMI]` — loss booked to opposing (bankruptcy) domain only.
+- `proof_v16_dead_leg_forfeit_books_one_loss_atom_to_opposing_domain_only` + `proof_v16_dead_leg_forfeit_books_four_loss_atoms_to_opposing_domain_only` `[SEMI]` — loss booked to opposing (bankruptcy) domain only.
 - `proof_v16_dead_leg_forfeit_partial_b_progress_does_not_detach` `[CON]` — partial progress remains on the same domain.
 
 ### #85. `no_single_instruction_full_market_scan_required`
@@ -1981,7 +1981,7 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Confidence:** MEDIUM
 **Strength:** MEDIUM
 **Harnesses:**
-- `proof_v16_b_residual_booking_makes_durable_progress_or_fails_closed` `[SEMI]` — booking triggers recompute or close.
+- `proof_v16_b_residual_booking_positive_makes_durable_progress` + `proof_v16_b_residual_booking_zero_noops` `[SEMI]` — booking triggers recompute or close.
 - `proof_v16_passive_backing_consumption_preserves_senior_accounting_without_wrapper_injection` `[CON]` — claim bound recomputed conservatively.
 - **Lean closure**: `BBookingResponse.lean::BBookingResponse`
   is a closed sum (recomputed | conservativelyLowered).

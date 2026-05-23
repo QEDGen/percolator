@@ -85,7 +85,7 @@ theorem creditRateNum_zero_claim (available : Nat) :
     load-bearing fail-closed property: if the source domain has nothing realizable
     backing it, the engine MUST credit zero against any claim.
 
-    Closes the "zero backing" lane of `proof_v16_account_source_claim_equity_zero_backing_gives_zero_credit`. -/
+    Closes the "zero backing" lane of `proof_v16_source_domain_realizable_support_zero_backing_gives_zero_credit`. -/
 theorem creditRateNum_zero_backing (claim : Nat) (h : 0 < claim) :
     creditRateNum 0 claim = 0 := by
   unfold creditRateNum
@@ -97,7 +97,7 @@ theorem creditRateNum_zero_backing (claim : Nat) (h : 0 < claim) :
     does not over-credit.
 
     Closes the "full backing" lane of
-    `proof_v16_account_source_claim_equity_full_backing_gives_full_credit`. -/
+    `proof_v16_source_domain_realizable_support_full_backing_gives_full_credit`. -/
 theorem creditRateNum_full_backing
     (available claim : Nat) (hc : 0 < claim) (h : claim ≤ available) :
     creditRateNum available claim = CREDIT_RATE_SCALE := by
