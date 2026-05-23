@@ -518,3 +518,98 @@ proptest! {
         prop_assert!(activate(&s, AssetLifecycle::Retired, &env).is_none());
     }
 }
+
+// ============================================================================
+// Tier 2.5 — Production connector
+//
+// Connects the Activation reference port to
+// `v16.rs::MarketGroupV16::activate_empty_asset_not_atomic`. The
+// production API:
+//
+//   activate_empty_asset_not_atomic(asset_index, authenticated_price, now_slot)
+//
+// requires the slot's current lifecycle to be `Disabled` or `Retired`
+// (post-cooldown), and bumps `asset_activation_count` /
+// `asset_set_epoch` / `last_asset_activation_slot`. The reference
+// port's `activate` similarly requires a valid step into `.Active`
+// and bumps the slot epoch.
+// ============================================================================
+
+use percolator::v16::{AssetLifecycleV16, MarketGroupV16, V16Config};
+
+fn group_with_config(config: V16Config) -> Option<MarketGroupV16> {
+    MarketGroupV16::new([1u8; 32], config).ok()
+}
+
+proptest! {
+    /// **Production activation bumps the asset epoch**: a successful
+    /// `activate_empty_asset_not_atomic` increments
+    /// `asset_activation_count` and updates
+    /// `last_asset_activation_slot`. This mirrors the reference
+    /// port's `epoch_bump` (§14 #61).
+    #[test]
+    fn production_activation_bumps_epoch(
+        price in 1u64..=1_000u64,
+        slot in 1u64..=1_000u64,
+    ) {
+        let Some(mut g) = group_with_config(V16Config::public_user_fund(4, 0, 10)) else {
+            return Ok(());
+        };
+        let pre_count = g.asset_activation_count;
+        let pre_set_epoch = g.asset_set_epoch;
+
+        if g.activate_empty_asset_not_atomic(0, price, slot).is_ok() {
+            prop_assert_eq!(g.asset_activation_count, pre_count + 1);
+            prop_assert_eq!(g.last_asset_activation_slot, slot);
+            // The asset_set_epoch is the cross-slot version counter — it
+            // bumps on activation. (Not equal to slot epoch in the Lean
+            // ref port, but the same role.)
+            prop_assert!(g.asset_set_epoch > pre_set_epoch);
+            // Post-state: asset lifecycle is Active.
+            prop_assert_eq!(g.assets[0].lifecycle, AssetLifecycleV16::Active);
+        }
+    }
+
+    /// **Production rejects activation on already-Active slot**: the
+    /// reference port's `lifecycle_step_into_active(Active)` returns
+    /// false; the production should similarly reject.
+    #[test]
+    fn production_rejects_active_to_active(
+        price in 1u64..=1_000u64,
+        slot in 1u64..=1_000u64,
+    ) {
+        let Some(mut g) = group_with_config(V16Config::public_user_fund(4, 0, 10)) else {
+            return Ok(());
+        };
+        // First activation succeeds; second on same slot must fail.
+        if g.activate_empty_asset_not_atomic(0, price, slot).is_err() {
+            return Ok(());
+        }
+        let next_slot = slot.checked_add(100).unwrap_or(slot);
+        prop_assert!(g.activate_empty_asset_not_atomic(0, price, next_slot).is_err());
+    }
+
+    /// **Production rejects authenticated_price == 0**: matches the
+    /// reference port's per-envelope soundness — a "zero price" is
+    /// not a valid activation (analogous to price_age check failure).
+    #[test]
+    fn production_rejects_zero_price(slot in 1u64..=1_000u64) {
+        let Some(mut g) = group_with_config(V16Config::public_user_fund(4, 0, 10)) else {
+            return Ok(());
+        };
+        prop_assert!(g.activate_empty_asset_not_atomic(0, 0, slot).is_err());
+    }
+
+    /// **Production rejects now_slot < current_slot**: an obvious
+    /// time-monotonicity constraint not captured by the reference
+    /// port (which uses an abstract epoch field). Verified for
+    /// completeness.
+    #[test]
+    fn production_rejects_stale_slot(price in 1u64..=1_000u64) {
+        let Some(mut g) = group_with_config(V16Config::public_user_fund(4, 0, 10)) else {
+            return Ok(());
+        };
+        g.current_slot = 100;
+        prop_assert!(g.activate_empty_asset_not_atomic(0, price, 50).is_err());
+    }
+}

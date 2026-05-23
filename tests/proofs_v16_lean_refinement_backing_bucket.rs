@@ -404,3 +404,203 @@ proptest! {
         }
     }
 }
+
+// ============================================================================
+// Tier 2.5 — Production connector
+//
+// Connects the BackingBucket reference port to `v16.rs::MarketGroupV16`'s
+// per-domain `source_backing_buckets[d]` plus the production handlers
+// `add_fresh_counterparty_backing_not_atomic` (open), the lien
+// transitions, etc.
+// ============================================================================
+
+use percolator::v16::{
+    BackingBucketStatusV16, BackingBucketV16, MarketGroupV16, V16Config,
+};
+
+/// Abstract the production bucket at a domain to the reference port.
+/// The production struct and the reference port have field-by-field
+/// alignment — this is essentially the identity map.
+fn abstract_bucket(group: &MarketGroupV16, domain: usize) -> BackingBucket {
+    let b = group.source_backing_buckets[domain];
+    BackingBucket {
+        market_id: b.market_id,
+        fresh_unliened: b.fresh_unliened_backing_num,
+        valid_liened: b.valid_liened_backing_num,
+        consumed_liened: b.consumed_liened_backing_num,
+        impaired_liened: b.impaired_liened_backing_num,
+        expiry_slot: b.expiry_slot,
+        status: match b.status {
+            BackingBucketStatusV16::Empty => BucketStatus::Empty,
+            BackingBucketStatusV16::Fresh => BucketStatus::Fresh,
+            BackingBucketStatusV16::Expired => BucketStatus::Expired,
+            BackingBucketStatusV16::Impaired => BucketStatus::Impaired,
+        },
+    }
+}
+
+/// Build a `MarketGroupV16` with a single-domain backing bucket
+/// pre-populated via `add_fresh_counterparty_backing_not_atomic`.
+/// Returns `None` if any setup step fails (e.g. config invalid).
+fn setup_group_with_fresh_backing(
+    fresh_amount: u128,
+    claim_bound: u128,
+) -> Option<MarketGroupV16> {
+    let market = [1u8; 32];
+    let mut g = MarketGroupV16::new(market, V16Config::public_user_fund(4, 0, 10)).ok()?;
+    g.add_source_positive_claim_bound_not_atomic(0, claim_bound, 10)
+        .ok()?;
+    if fresh_amount == 0 {
+        return Some(g);
+    }
+    // `add_fresh_counterparty_backing_not_atomic` requires
+    // amount > 0 and expiry_slot > current_slot.
+    g.add_fresh_counterparty_backing_not_atomic(0, fresh_amount, 10)
+        .ok()?;
+    Some(g)
+}
+
+proptest! {
+    /// **Production-side total_backing conservation**: after any
+    /// sequence of create / release / consume on the production
+    /// lien handlers, the bucket's four-partition sum stays
+    /// invariant (well — consume moves valid → consumed, both in
+    /// the sum). The reference port's `*_preserves_total` family
+    /// claims this directly; here we verify it holds for the real
+    /// handlers.
+    #[test]
+    fn production_lien_transitions_preserve_total(
+        fresh_amount in 1u128..=10_000u128,
+        claim_bound in 1u128..=10_000u128,
+        lien_amount in 1u128..=10_000u128,
+    ) {
+        prop_assume!(lien_amount <= fresh_amount);
+        prop_assume!(lien_amount <= claim_bound);
+
+        let Some(mut g) = setup_group_with_fresh_backing(fresh_amount, claim_bound) else {
+            return Ok(());
+        };
+
+        let pre = abstract_bucket(&g, 0);
+        let pre_total = pre.total_backing();
+
+        // Create a lien (fresh_unliened → valid_liened).
+        if g.create_source_credit_lien_from_counterparty_not_atomic(0, lien_amount)
+            .is_ok()
+        {
+            let post = abstract_bucket(&g, 0);
+            prop_assert_eq!(post.total_backing(), pre_total);
+            prop_assert_eq!(post.fresh_unliened + lien_amount, pre.fresh_unliened);
+            prop_assert_eq!(post.valid_liened, pre.valid_liened + lien_amount);
+        }
+    }
+
+    /// **Production reference-equivalence for create_lien**: the
+    /// production `create_source_credit_lien_from_counterparty_not_atomic`
+    /// produces a post-state that matches the reference port's
+    /// `lien_against`.
+    #[test]
+    fn production_create_lien_matches_reference(
+        fresh_amount in 1u128..=10_000u128,
+        claim_bound in 1u128..=10_000u128,
+        lien_amount in 1u128..=10_000u128,
+    ) {
+        prop_assume!(lien_amount <= claim_bound);
+
+        let Some(mut g) = setup_group_with_fresh_backing(fresh_amount, claim_bound) else {
+            return Ok(());
+        };
+
+        let ref_pre = abstract_bucket(&g, 0);
+        let ref_post = ref_pre.lien_against(lien_amount);
+
+        let prod_ok = g
+            .create_source_credit_lien_from_counterparty_not_atomic(0, lien_amount)
+            .is_ok();
+        let prod_post = abstract_bucket(&g, 0);
+
+        if prod_ok {
+            // Reference must also accept; post-states match on the four
+            // backing fields.
+            let ref_post = ref_post.expect("reference rejected what production accepted");
+            prop_assert_eq!(prod_post.fresh_unliened, ref_post.fresh_unliened);
+            prop_assert_eq!(prod_post.valid_liened, ref_post.valid_liened);
+            prop_assert_eq!(prod_post.consumed_liened, ref_post.consumed_liened);
+            prop_assert_eq!(prod_post.impaired_liened, ref_post.impaired_liened);
+        }
+    }
+
+    /// **Production consume preserves total_backing**: valid →
+    /// consumed move within the four-partition sum.
+    #[test]
+    fn production_consume_lien_preserves_total(
+        (fresh_amount, lien_amount, consume_amount) in
+            (1u128..=10_000u128).prop_flat_map(|fresh| {
+                (1u128..=fresh).prop_flat_map(move |lien| {
+                    (1u128..=lien).prop_map(move |consume| (fresh, lien, consume))
+                })
+            }),
+    ) {
+        let claim_bound = fresh_amount;  // claim ≥ lien is ensured
+
+        let Some(mut g) = setup_group_with_fresh_backing(fresh_amount, claim_bound) else {
+            return Ok(());
+        };
+        if g.create_source_credit_lien_from_counterparty_not_atomic(0, lien_amount)
+            .is_err()
+        {
+            return Ok(());
+        }
+
+        let pre = abstract_bucket(&g, 0);
+        let pre_total = pre.total_backing();
+
+        if g.consume_source_credit_lien_from_counterparty_not_atomic(0, consume_amount)
+            .is_ok()
+        {
+            let post = abstract_bucket(&g, 0);
+            prop_assert_eq!(post.total_backing(), pre_total);
+            prop_assert_eq!(post.valid_liened + consume_amount, pre.valid_liened);
+            prop_assert_eq!(post.consumed_liened, pre.consumed_liened + consume_amount);
+        }
+    }
+
+    /// **Production release preserves total_backing**: valid →
+    /// fresh_unliened move (dual of create).
+    #[test]
+    fn production_release_lien_preserves_total(
+        (fresh_amount, lien_amount, release_amount) in
+            (1u128..=10_000u128).prop_flat_map(|fresh| {
+                (1u128..=fresh).prop_flat_map(move |lien| {
+                    (1u128..=lien).prop_map(move |release| (fresh, lien, release))
+                })
+            }),
+    ) {
+        let claim_bound = fresh_amount;
+
+        let Some(mut g) = setup_group_with_fresh_backing(fresh_amount, claim_bound) else {
+            return Ok(());
+        };
+        if g.create_source_credit_lien_from_counterparty_not_atomic(0, lien_amount)
+            .is_err()
+        {
+            return Ok(());
+        }
+
+        let pre = abstract_bucket(&g, 0);
+        let pre_total = pre.total_backing();
+
+        if g.release_source_credit_lien_from_counterparty_not_atomic(0, release_amount)
+            .is_ok()
+        {
+            let post = abstract_bucket(&g, 0);
+            prop_assert_eq!(post.total_backing(), pre_total);
+            prop_assert_eq!(post.valid_liened + release_amount, pre.valid_liened);
+            prop_assert_eq!(post.fresh_unliened, pre.fresh_unliened + release_amount);
+        }
+    }
+}
+
+// silence unused-import lint in some configurations
+#[allow(unused_imports)]
+use BackingBucketV16 as _BackingBucketV16Used;

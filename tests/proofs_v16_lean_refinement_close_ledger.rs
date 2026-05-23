@@ -525,3 +525,169 @@ proptest! {
         prop_assert!(!b.lt(&a));
     }
 }
+
+// ============================================================================
+// Tier 2.5 — Production connector
+//
+// The production `CloseProgressLedgerV16` (v16.rs:1040) is a pub-field
+// value type with `has_irreversible_progress` and `has_pending_residual`
+// methods. The reference port mirrors the same field set and method
+// behavior. We can construct production values directly via field
+// access and verify the agree-on-methods.
+//
+// The booking transitions (book_support / book_insurance / book_b /
+// book_explicit / etc.) are embedded in engine methods on
+// MarketGroupV16, not callable on the value type directly — so the
+// connector here focuses on the value-type-level methods.
+// ============================================================================
+
+use percolator::v16::{CloseProgressLedgerV16, SideV16};
+
+/// Abstract a production close ledger to the reference port. Field
+/// names differ slightly (close_id, asset_index, market_id,
+/// domain_side, drift_reference_slot, max_close_slot,
+/// gross_loss_at_close_start, support_consumed, junior_face_burned,
+/// insurance_spent, b_loss_booked, explicit_loss_assigned,
+/// quantity_adl_applied_q, drift_consumed, residual_remaining; the
+/// production lacks `pending_obligation_credits` and `adl_applied`,
+/// so we synthesize those — production sets `adl_applied` implicitly
+/// via `quantity_adl_applied_q != 0`).
+fn abstract_close_ledger(p: &CloseProgressLedgerV16) -> CloseLedger {
+    CloseLedger {
+        active: p.active,
+        finalized: p.finalized,
+        canceled: p.canceled,
+        adl_applied: p.quantity_adl_applied_q != 0,
+        close_id: p.close_id,
+        asset_index: p.asset_index,
+        market_id: p.market_id,
+        domain_side: match p.domain_side {
+            SideV16::Long => Side::Long,
+            SideV16::Short => Side::Short,
+        },
+        gross_loss_at_close_start: p.gross_loss_at_close_start,
+        drift_reference_slot: p.drift_reference_slot,
+        max_close_slot: p.max_close_slot,
+        support_consumed: p.support_consumed,
+        junior_face_burned: p.junior_face_burned,
+        insurance_spent: p.insurance_spent,
+        b_loss_booked: p.b_loss_booked,
+        explicit_loss_assigned: p.explicit_loss_assigned,
+        quantity_adl_applied_q: p.quantity_adl_applied_q,
+        drift_consumed: p.drift_consumed,
+        // Production has no separate pending-obligation field — pending
+        // obligation booking goes through capital tracking elsewhere.
+        pending_obligation_credits: 0,
+        residual_remaining: p.residual_remaining,
+    }
+}
+
+fn arb_v16_side() -> impl Strategy<Value = SideV16> {
+    prop_oneof![Just(SideV16::Long), Just(SideV16::Short)]
+}
+
+fn arb_production_close_ledger() -> impl Strategy<Value = CloseProgressLedgerV16> {
+    let flags = (any::<bool>(), any::<bool>(), any::<bool>());
+    let ids = (any::<u64>(), any::<u32>(), any::<u64>());
+    let domain = (arb_v16_side(), 0u128..=10_000u128);
+    let slots = (any::<u64>(), any::<u64>());
+    let bookings_a = (
+        0u128..=10_000u128,
+        0u128..=10_000u128,
+        0u128..=10_000u128,
+        0u128..=10_000u128,
+    );
+    let bookings_b = (
+        0u128..=10_000u128,
+        0u128..=10_000u128,
+        0u128..=10_000u128,
+        0u128..=10_000u128,
+    );
+    (flags, ids, domain, slots, bookings_a, bookings_b).prop_map(
+        |(
+            (active, finalized, canceled),
+            (close_id, asset_index, market_id),
+            (domain_side, gross),
+            (drift_ref, max_slot),
+            (sc, jfb, ins, bl),
+            (ela, qadl, dc, rr),
+        )| CloseProgressLedgerV16 {
+            active,
+            finalized,
+            canceled,
+            close_id,
+            asset_index,
+            market_id,
+            domain_side,
+            gross_loss_at_close_start: gross,
+            drift_reference_slot: drift_ref,
+            max_close_slot: max_slot,
+            support_consumed: sc,
+            junior_face_burned: jfb,
+            insurance_spent: ins,
+            b_loss_booked: bl,
+            explicit_loss_assigned: ela,
+            quantity_adl_applied_q: qadl,
+            drift_consumed: dc,
+            residual_remaining: rr,
+        },
+    )
+}
+
+proptest! {
+    /// **Production `has_irreversible_progress` matches reference**:
+    /// the production method on `CloseProgressLedgerV16` and the
+    /// reference port's method on the abstracted state return the
+    /// same Bool.
+    #[test]
+    fn production_has_irreversible_progress_matches(
+        p in arb_production_close_ledger(),
+    ) {
+        let r = abstract_close_ledger(&p);
+        prop_assert_eq!(p.has_irreversible_progress(), r.has_irreversible_progress());
+    }
+
+    /// **Production `EMPTY` reconciles with reference empty**: the
+    /// production's `EMPTY` constant abstracts to a state with no
+    /// irreversible progress.
+    #[test]
+    fn production_empty_no_irreversible_progress(_x: u32) {
+        let p = CloseProgressLedgerV16::EMPTY;
+        let r = abstract_close_ledger(&p);
+        prop_assert!(!p.has_irreversible_progress());
+        prop_assert!(!r.has_irreversible_progress());
+    }
+
+    /// **Production `has_pending_residual` ↔ reference predicate**:
+    /// the production's `has_pending_residual` flag corresponds to
+    /// "active && !finalized && !canceled && residual > 0" on the
+    /// reference. Verifies the production predicate against the
+    /// reference port's `is_active_not_done` plus residual check.
+    #[test]
+    fn production_pending_residual_matches(p in arb_production_close_ledger()) {
+        let r = abstract_close_ledger(&p);
+        let ref_pending = r.is_active_not_done() && r.residual_remaining > 0;
+        prop_assert_eq!(p.has_pending_residual(), ref_pending);
+    }
+
+    /// **Production field-by-field roundtrip via abstraction**:
+    /// abstracting a production ledger and reading individual
+    /// fields produces the same values as reading the production
+    /// directly. Sanity check on the abstraction map.
+    #[test]
+    fn production_abstraction_preserves_fields(p in arb_production_close_ledger()) {
+        let r = abstract_close_ledger(&p);
+        prop_assert_eq!(r.support_consumed, p.support_consumed);
+        prop_assert_eq!(r.junior_face_burned, p.junior_face_burned);
+        prop_assert_eq!(r.insurance_spent, p.insurance_spent);
+        prop_assert_eq!(r.b_loss_booked, p.b_loss_booked);
+        prop_assert_eq!(r.explicit_loss_assigned, p.explicit_loss_assigned);
+        prop_assert_eq!(r.quantity_adl_applied_q, p.quantity_adl_applied_q);
+        prop_assert_eq!(r.drift_consumed, p.drift_consumed);
+        prop_assert_eq!(r.residual_remaining, p.residual_remaining);
+        prop_assert_eq!(r.close_id, p.close_id);
+        prop_assert_eq!(r.asset_index, p.asset_index);
+        prop_assert_eq!(r.market_id, p.market_id);
+        prop_assert_eq!(r.gross_loss_at_close_start, p.gross_loss_at_close_start);
+    }
+}

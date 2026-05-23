@@ -394,3 +394,196 @@ proptest! {
         prop_assert_eq!(f_post.total_debit(), f_post.total_credit());
     }
 }
+
+// ============================================================================
+// Tier 2.5 — Production connector
+//
+// Connects the TokenValueFlow reference port to
+// `v16.rs::TokenValueFlowProofV16` plus its named constructors and
+// `validate()` method.
+//
+// Production stores per-class aggregates in two parallel arrays
+// (debits[17], credits[17]) — the per-class totals after summing all
+// rows. The reference port stores a list of rows. The bridge agrees
+// on the *aggregates*: per-class sums, totals, externals, vault.
+// ============================================================================
+
+use percolator::v16::{TokenValueClassV16, TokenValueFlowProofV16};
+
+/// Convert a production class index to the reference enum.
+fn class_from_v16(c: TokenValueClassV16) -> TokenValueClass {
+    match c {
+        TokenValueClassV16::TokenVault => TokenValueClass::TokenVault,
+        TokenValueClassV16::SeniorCapital => TokenValueClass::SeniorCapital,
+        TokenValueClassV16::InsuranceCapital => TokenValueClass::InsuranceCapital,
+        TokenValueClassV16::AccountCapital => TokenValueClass::AccountCapital,
+        TokenValueClassV16::CloseSupportConsumed => TokenValueClass::CloseSupportConsumed,
+        TokenValueClassV16::CloseInsuranceSpent => TokenValueClass::CloseInsuranceSpent,
+        TokenValueClassV16::CloseCounterpartyCreditConsumed => {
+            TokenValueClass::CloseCounterpartyCreditConsumed
+        }
+        TokenValueClassV16::BResidualBooked => TokenValueClass::BResidualBooked,
+        TokenValueClassV16::PendingObligationEscrow => TokenValueClass::PendingObligationEscrow,
+        TokenValueClassV16::PendingObligationCredit => TokenValueClass::PendingObligationCredit,
+        TokenValueClassV16::ExplicitBackedLoss => TokenValueClass::ExplicitBackedLoss,
+        TokenValueClassV16::SettlementRoundingResidue => {
+            TokenValueClass::SettlementRoundingResidue
+        }
+        TokenValueClassV16::CancelDepositEscrow => TokenValueClass::CancelDepositEscrow,
+        TokenValueClassV16::ResolvedPayoutPaid => TokenValueClass::ResolvedPayoutPaid,
+        TokenValueClassV16::ProtocolFeePaid => TokenValueClass::ProtocolFeePaid,
+        TokenValueClassV16::ExternalQuote => TokenValueClass::ExternalQuote,
+        TokenValueClassV16::UnallocatedProtocolSurplus => {
+            TokenValueClass::UnallocatedProtocolSurplus
+        }
+    }
+}
+
+/// Production total debit (sum across the per-class array).
+fn prod_total_debit(p: &TokenValueFlowProofV16) -> u128 {
+    p.debits.iter().sum()
+}
+
+/// Production total credit.
+fn prod_total_credit(p: &TokenValueFlowProofV16) -> u128 {
+    p.credits.iter().sum()
+}
+
+proptest! {
+    /// **Production `account_capital_to_insurance` matches reference
+    /// `internal_transfer_flow(AccountCapital, InsuranceCapital, ...)`**.
+    /// Both produce a balanced flow with one (AccountCapital,
+    /// InsuranceCapital) move and no external quote.
+    #[test]
+    fn production_account_capital_to_insurance_matches_reference(
+        amount in 0u128..=1_000_000u128,
+        vault in 0u128..=1_000_000u128,
+    ) {
+        // Production constructor.
+        let prod = TokenValueFlowProofV16::account_capital_to_insurance(amount, vault, vault)
+            .expect("production constructor should succeed for safe inputs");
+
+        // Reference constructor.
+        let r = internal_transfer_flow(
+            TokenValueClass::AccountCapital,
+            TokenValueClass::InsuranceCapital,
+            amount,
+            vault,
+        );
+
+        // Total debit / credit agree.
+        prop_assert_eq!(prod_total_debit(&prod), r.total_debit());
+        prop_assert_eq!(prod_total_credit(&prod), r.total_credit());
+
+        // Per-class agreement: AccountCapital debit, InsuranceCapital credit.
+        prop_assert_eq!(
+            prod.debits[TokenValueClassV16::AccountCapital as usize],
+            r.debit_by_class(TokenValueClass::AccountCapital)
+        );
+        prop_assert_eq!(
+            prod.credits[TokenValueClassV16::InsuranceCapital as usize],
+            r.credit_by_class(TokenValueClass::InsuranceCapital)
+        );
+
+        // External and vault agree.
+        prop_assert_eq!(prod.external_quote_in, r.external_quote_in);
+        prop_assert_eq!(prod.external_quote_out, r.external_quote_out);
+        prop_assert_eq!(prod.vault_before, r.vault_before);
+        prop_assert_eq!(prod.vault_after, r.vault_after);
+
+        // Production validate succeeds — the §14 #2 invariant holds.
+        prop_assert!(prod.validate().is_ok());
+    }
+
+    /// **Production `insurance_to_close_insurance_spent` matches
+    /// reference**: same pattern, different class pair.
+    #[test]
+    fn production_insurance_to_close_insurance_spent_matches_reference(
+        amount in 0u128..=1_000_000u128,
+        vault in 0u128..=1_000_000u128,
+    ) {
+        let prod = TokenValueFlowProofV16::insurance_to_close_insurance_spent(
+            amount, vault, vault,
+        )
+        .expect("production constructor should succeed");
+
+        let r = insurance_to_close_spent_flow(amount, vault);
+
+        prop_assert_eq!(prod_total_debit(&prod), r.total_debit());
+        prop_assert_eq!(prod_total_credit(&prod), r.total_credit());
+        prop_assert_eq!(
+            prod.debits[TokenValueClassV16::InsuranceCapital as usize],
+            r.debit_by_class(TokenValueClass::InsuranceCapital)
+        );
+        prop_assert_eq!(
+            prod.credits[TokenValueClassV16::CloseInsuranceSpent as usize],
+            r.credit_by_class(TokenValueClass::CloseInsuranceSpent)
+        );
+        prop_assert_eq!(prod.external_quote_in, 0);
+        prop_assert_eq!(prod.external_quote_out, 0);
+        prop_assert_eq!(prod.vault_before, prod.vault_after);
+        prop_assert!(prod.validate().is_ok());
+    }
+
+    /// **Production `external_in_to_account_capital` matches a
+    /// reference external-inflow shape**: external_quote_in = amount,
+    /// AccountCapital debit = amount, ExternalQuote credit = amount.
+    /// Vault increases by amount.
+    #[test]
+    fn production_external_in_matches_reference(
+        amount in 0u128..=1_000_000u128,
+        vault_before in 0u128..=1_000_000u128,
+    ) {
+        let vault_after = match vault_before.checked_add(amount) {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+
+        let prod = TokenValueFlowProofV16::external_in_to_account_capital(
+            amount,
+            vault_before,
+            vault_after,
+        )
+        .expect("constructor should succeed");
+
+        prop_assert_eq!(prod_total_debit(&prod), prod_total_credit(&prod));
+        prop_assert_eq!(prod_total_debit(&prod), amount);
+        prop_assert_eq!(prod.external_quote_in, amount);
+        prop_assert_eq!(prod.external_quote_out, 0);
+        prop_assert_eq!(prod.vault_after, prod.vault_before + amount);
+        prop_assert_eq!(
+            prod.debits[TokenValueClassV16::AccountCapital as usize],
+            amount
+        );
+        prop_assert_eq!(
+            prod.credits[TokenValueClassV16::ExternalQuote as usize],
+            amount
+        );
+        prop_assert!(prod.validate().is_ok());
+    }
+
+    /// **Production validate enforces total-balance**: every
+    /// successfully-constructed production proof has
+    /// total_debit == total_credit, mirroring §14 #2.
+    #[test]
+    fn production_named_constructor_validates(
+        amount in 0u128..=1_000_000u128,
+        vault in 0u128..=1_000_000u128,
+    ) {
+        let constructors: Vec<Result<TokenValueFlowProofV16, _>> = vec![
+            TokenValueFlowProofV16::account_capital_to_insurance(amount, vault, vault),
+            TokenValueFlowProofV16::insurance_to_close_insurance_spent(amount, vault, vault),
+            TokenValueFlowProofV16::account_capital_to_realized_loss(amount, vault, vault),
+        ];
+        for prod in constructors.into_iter().flatten() {
+            prop_assert!(prod.validate().is_ok());
+            prop_assert_eq!(prod_total_debit(&prod), prod_total_credit(&prod));
+        }
+    }
+}
+
+// Reference the helper to silence unused-warning in some configurations.
+#[allow(unused)]
+fn _class_mapping_smoke(c: TokenValueClassV16) -> TokenValueClass {
+    class_from_v16(c)
+}

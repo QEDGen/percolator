@@ -217,3 +217,79 @@ proptest! {
         prop_assert!(final_r < w);
     }
 }
+
+// ============================================================================
+// Tier 2.5 — Production connector
+//
+// The production embeds the B-booking arithmetic inline in
+// `MarketGroupV16::book_bankruptcy_residual_chunk_internal` (v16.rs:6455-6460)
+// rather than exposing it as a standalone function:
+//
+//     numerator = engine_chunk * SOCIAL_LOSS_DEN + rem
+//     delta_b = numerator / weight_sum
+//     new_rem = numerator % weight_sum
+//
+// The bridge here is structural:
+//   (a) the production's `SOCIAL_LOSS_DEN` constant matches the
+//       reference port's constant;
+//   (b) the reference port's `b_booking_step` formula agrees with
+//       the inline production formula at random inputs.
+//
+// This stops short of calling the engine method (which requires a
+// MarketGroupV16 fixture in a bankrupt-close state — substantial
+// setup) but verifies the arithmetic equivalence directly.
+// ============================================================================
+
+use percolator::SOCIAL_LOSS_DEN as PROD_SOCIAL_LOSS_DEN;
+
+#[test]
+fn production_social_loss_den_matches_reference() {
+    assert_eq!(PROD_SOCIAL_LOSS_DEN, SOCIAL_LOSS_DEN);
+}
+
+proptest! {
+    /// **Production inline B-booking formula matches reference**:
+    /// the reference port's `b_booking_step` produces exactly the
+    /// `(delta_b, new_rem)` pair that the production's inline
+    /// arithmetic computes. Verifies the formula equivalence at
+    /// random inputs across the full domain the production
+    /// arithmetic operates on.
+    #[test]
+    fn production_inline_formula_matches_reference(
+        chunk in 0u128..=1_000_000u128,
+        w in 1u128..=SOCIAL_LOSS_DEN,
+        rem in 0u128..=SOCIAL_LOSS_DEN,
+    ) {
+        // Reference port computation.
+        let (ref_delta_b, ref_new_rem) = b_booking_step(chunk, rem, w);
+
+        // Production inline arithmetic (mirrors lines 6455-6460).
+        let prod_numerator = chunk * PROD_SOCIAL_LOSS_DEN + rem;
+        let prod_delta_b = prod_numerator / w;
+        let prod_new_rem = prod_numerator % w;
+
+        prop_assert_eq!(ref_delta_b, prod_delta_b);
+        prop_assert_eq!(ref_new_rem, prod_new_rem);
+    }
+
+    /// **Production formula preserves the spec's exact-loss
+    /// invariant**: the §14 #75 conservation identity holds for
+    /// the inline production formula too —
+    /// `prod_delta_b * W + prod_new_rem = engine_chunk * SOCIAL_LOSS_DEN + R`.
+    /// This shadows the reference proptest but on the production
+    /// expression directly.
+    #[test]
+    fn production_formula_exact_conservation(
+        chunk in 0u128..=1_000_000u128,
+        w in 1u128..=SOCIAL_LOSS_DEN,
+        rem in 0u128..=SOCIAL_LOSS_DEN,
+    ) {
+        let prod_numerator = chunk * PROD_SOCIAL_LOSS_DEN + rem;
+        let prod_delta_b = prod_numerator / w;
+        let prod_new_rem = prod_numerator % w;
+        prop_assert_eq!(
+            prod_delta_b * w + prod_new_rem,
+            chunk * PROD_SOCIAL_LOSS_DEN + rem
+        );
+    }
+}

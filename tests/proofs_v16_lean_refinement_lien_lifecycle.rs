@@ -454,3 +454,124 @@ proptest! {
         }
     }
 }
+
+// ============================================================================
+// Tier 2.5 — Production connector (backing-side per-domain aggregate)
+//
+// The production tracks lien data across multiple layers (bucket,
+// source_credit aggregate, account). The reference port's `Lien` is a
+// single record. The clean bridge is on the backing-side per-domain
+// aggregate: `source_credit[d].valid_liened_backing_num` is updated
+// by every `create / release / consume` and corresponds to the
+// reference port's `Lien.backing_reserved_num`.
+//
+// This connector verifies the per-domain backing aggregate evolves as
+// the reference port's Lien.backing transitions predict.
+// ============================================================================
+
+use percolator::v16::{MarketGroupV16, V16Config};
+
+fn group_with_lien_setup(
+    fresh_amount: u128,
+    claim_bound: u128,
+) -> Option<MarketGroupV16> {
+    let market = [1u8; 32];
+    let mut g = MarketGroupV16::new(market, V16Config::public_user_fund(4, 0, 10)).ok()?;
+    g.add_source_positive_claim_bound_not_atomic(0, claim_bound, 10).ok()?;
+    if fresh_amount > 0 {
+        g.add_fresh_counterparty_backing_not_atomic(0, fresh_amount, 10).ok()?;
+    }
+    Some(g)
+}
+
+proptest! {
+    /// **Production create_lien increments source_credit aggregate by
+    /// exactly amount** (mirrors reference `Lien.create(0, amount, 0)`
+    /// on the backing-side field).
+    #[test]
+    fn production_source_credit_aggregate_after_create(
+        fresh in 1u128..=10_000u128,
+        bound in 1u128..=10_000u128,
+        lien_amount in 1u128..=10_000u128,
+    ) {
+        prop_assume!(lien_amount <= fresh);
+        prop_assume!(lien_amount <= bound);
+
+        let Some(mut g) = group_with_lien_setup(fresh, bound) else {
+            return Ok(());
+        };
+
+        let pre_valid = g.source_credit[0].valid_liened_backing_num;
+        if g.create_source_credit_lien_from_counterparty_not_atomic(0, lien_amount)
+            .is_ok()
+        {
+            let post_valid = g.source_credit[0].valid_liened_backing_num;
+            prop_assert_eq!(post_valid, pre_valid + lien_amount);
+        }
+    }
+
+    /// **Production release_lien decrements source_credit aggregate
+    /// by exactly amount** (mirrors reference `Lien.release(0,
+    /// amount, 0)`).
+    #[test]
+    fn production_source_credit_aggregate_after_release(
+        (fresh, lien_amount, release_amount) in
+            (1u128..=10_000u128).prop_flat_map(|fresh| {
+                (1u128..=fresh).prop_flat_map(move |lien| {
+                    (1u128..=lien).prop_map(move |release| (fresh, lien, release))
+                })
+            }),
+    ) {
+        let Some(mut g) = group_with_lien_setup(fresh, fresh) else {
+            return Ok(());
+        };
+        if g.create_source_credit_lien_from_counterparty_not_atomic(0, lien_amount)
+            .is_err()
+        {
+            return Ok(());
+        }
+
+        let pre_valid = g.source_credit[0].valid_liened_backing_num;
+        if g.release_source_credit_lien_from_counterparty_not_atomic(0, release_amount)
+            .is_ok()
+        {
+            let post_valid = g.source_credit[0].valid_liened_backing_num;
+            prop_assert_eq!(post_valid + release_amount, pre_valid);
+        }
+    }
+
+    /// **Production consume_lien increments spent_backing_num and
+    /// decrements valid_liened_backing_num by exactly amount**
+    /// (mirrors reference `Lien.consume(0, amount, 0)` plus the
+    /// atomic move-to-spent that BackingBucket models via
+    /// consumed_liened).
+    #[test]
+    fn production_source_credit_aggregate_after_consume(
+        (fresh, lien_amount, consume_amount) in
+            (1u128..=10_000u128).prop_flat_map(|fresh| {
+                (1u128..=fresh).prop_flat_map(move |lien| {
+                    (1u128..=lien).prop_map(move |consume| (fresh, lien, consume))
+                })
+            }),
+    ) {
+        let Some(mut g) = group_with_lien_setup(fresh, fresh) else {
+            return Ok(());
+        };
+        if g.create_source_credit_lien_from_counterparty_not_atomic(0, lien_amount)
+            .is_err()
+        {
+            return Ok(());
+        }
+
+        let pre_valid = g.source_credit[0].valid_liened_backing_num;
+        let pre_spent = g.source_credit[0].spent_backing_num;
+        if g.consume_source_credit_lien_from_counterparty_not_atomic(0, consume_amount)
+            .is_ok()
+        {
+            let post_valid = g.source_credit[0].valid_liened_backing_num;
+            let post_spent = g.source_credit[0].spent_backing_num;
+            prop_assert_eq!(post_valid + consume_amount, pre_valid);
+            prop_assert_eq!(post_spent, pre_spent + consume_amount);
+        }
+    }
+}

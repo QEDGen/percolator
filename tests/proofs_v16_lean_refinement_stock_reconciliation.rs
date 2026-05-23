@@ -340,3 +340,104 @@ proptest! {
         }
     }
 }
+
+// ============================================================================
+// Tier 2.5 — Production connector
+//
+// Connects the StockClasses reference port to
+// `v16.rs::MarketGroupV16::stock_reconciliation_proof`. The production
+// currently emits a 5-class projection (token_vault, senior_capital_total,
+// insurance_capital, settlement_rounding_residue_total,
+// unallocated_protocol_surplus); the abstraction zero-fills the other
+// five Lean classes.
+// ============================================================================
+
+use percolator::v16::{MarketGroupV16, V16Config};
+
+/// Abstract the production engine's stock state to the reference port.
+/// Mirrors the projection in `MarketGroupV16::stock_reconciliation_proof`:
+/// c_tot is senior capital, insurance is insurance capital, the
+/// settlement-rounding residue total is currently always 0 in
+/// production, and the unallocated surplus is `vault - (c_tot + insurance)`.
+fn abstract_stock(group: &MarketGroupV16) -> StockClasses {
+    let senior = group.c_tot.saturating_add(group.insurance);
+    StockClasses {
+        c_tot: group.c_tot,
+        insurance: group.insurance,
+        cancel_deposit_escrow: 0,
+        pending_obligation_escrow: 0,
+        close_staged_quote_reserve: 0,
+        resolved_payout_escrow: 0,
+        explicit_backed_loss_reserve: 0,
+        settlement_rounding_residue: 0,
+        protocol_fee_payable: 0,
+        unallocated_protocol_surplus: group.vault.saturating_sub(senior),
+    }
+}
+
+fn fresh_group() -> Option<MarketGroupV16> {
+    let market = [1u8; 32];
+    MarketGroupV16::new(market, V16Config::public_user_fund(4, 0, 10)).ok()
+}
+
+proptest! {
+    /// **Production reconciliation on a fresh engine**: a freshly-
+    /// constructed `MarketGroupV16` (no deposits, no liens) abstracts
+    /// to a `StockClasses` that reconciles its own vault.
+    #[test]
+    fn production_fresh_group_reconciles(_x: u32) {
+        let Some(g) = fresh_group() else {
+            return Ok(());
+        };
+        let sc = abstract_stock(&g);
+        prop_assert!(sc.reconciled(g.vault));
+    }
+
+    /// **Production assert_public_invariants implies reconciliation**:
+    /// after any action that leaves the engine in a public-invariant-
+    /// valid state, the stock-class abstraction reconciles to vault.
+    /// We exercise the production's own `add_source_positive_claim_bound`
+    /// + `add_fresh_counterparty_backing` setup path.
+    #[test]
+    fn production_after_setup_reconciles(
+        fresh in 1u128..=10_000u128,
+        bound in 1u128..=10_000u128,
+    ) {
+        let Some(mut g) = fresh_group() else {
+            return Ok(());
+        };
+        if g.add_source_positive_claim_bound_not_atomic(0, bound, 10).is_err() {
+            return Ok(());
+        }
+        if g.add_fresh_counterparty_backing_not_atomic(0, fresh, 10).is_err() {
+            return Ok(());
+        }
+        // Production should still satisfy its invariants.
+        prop_assert!(g.assert_public_invariants().is_ok());
+        let sc = abstract_stock(&g);
+        prop_assert!(sc.reconciled(g.vault));
+    }
+
+    /// **Production stock_reconciliation_proof matches abstraction**:
+    /// the proof emitted by production agrees with the reference
+    /// port's totalV computation on the abstracted state.
+    #[test]
+    fn production_proof_matches_abstract(_x: u32) {
+        let Some(g) = fresh_group() else {
+            return Ok(());
+        };
+        let Ok(proof) = g.stock_reconciliation_proof() else {
+            return Ok(());
+        };
+        let sc = abstract_stock(&g);
+        // Sum the production's proof manually.
+        let proof_total = proof.senior_capital_total
+            + proof.insurance_capital
+            + proof.settlement_rounding_residue_total
+            + proof.unallocated_protocol_surplus;
+        prop_assert_eq!(proof_total, proof.token_vault);
+        // The reference port's totalV equals the proof's total.
+        prop_assert_eq!(sc.total_v(), proof_total);
+        prop_assert!(sc.reconciled(proof.token_vault));
+    }
+}

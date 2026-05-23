@@ -351,3 +351,176 @@ proptest! {
         }
     }
 }
+
+// ============================================================================
+// Tier 2.5 — Production connector
+//
+// The reference port above is the Lean spec made executable. This section
+// connects it to the actual `v16.rs::MarketGroupV16::reserve_insurance_credit_not_atomic`
+// production handler and proptests that the production transition behaves
+// like the reference port under an abstraction function.
+//
+// The setup mirrors `tests/v16_spec_tests.rs::v16_reserve_insurance_credit_*`
+// patterns. We exercise small amounts in BOUND-units so the
+// `amount_from_bound_num` conversion is exact (no rounding).
+// ============================================================================
+
+use percolator::{
+    BOUND_SCALE,
+    v16::{MarketGroupV16, V16Config},
+};
+
+/// Abstract a single-domain projection of the production engine to the
+/// reference port. Everything is expressed in **atoms** in the
+/// reference — the production's `insurance_credit_reserved_num` is in
+/// BOUND-units (sub-atomic), but the *budget* constraint is enforced
+/// against `amount_from_bound_num(reserved)` (the atom-rounded value).
+/// To match this exactly, the abstraction:
+///
+///   - puts the budget in atoms (its native unit on production);
+///   - converts the BOUND-unit reservation to atoms via the same
+///     ceil-divide used by the production check;
+///   - keeps spent in atoms.
+fn abstract_insurance(group: &MarketGroupV16, domain: usize) -> InsuranceLedger {
+    let reservation = group.insurance_credit_reservations[domain];
+    let reserved_atoms = reservation
+        .insurance_credit_reserved_num
+        .div_ceil(BOUND_SCALE);
+    InsuranceLedger {
+        initial_deposited: group.insurance_domain_budget[domain],
+        source_credit_reserved_num: reserved_atoms,
+        domain_spent: group.insurance_domain_spent[domain],
+        staged_domain_debit: 0,
+        global_protocol_staged: 0,
+    }
+}
+
+/// Build a `MarketGroupV16` with the insurance pool, domain budget, and
+/// initial reservation set so the conservation invariant holds.
+///
+/// All input quantities are in **atoms**. The production
+/// `insurance_credit_reserved_num` is stored in BOUND-units; the helper
+/// converts `initial_reserved_atoms` to BOUND-units (× BOUND_SCALE) when
+/// writing the production field. This keeps the conversion exact (no
+/// ceil-divide rounding).
+fn setup_group_for_insurance_reserve(
+    budget_atoms: u128,
+    initial_reserved_atoms: u128,
+) -> Option<MarketGroupV16> {
+    let market = [1u8; 32];
+    let mut g = MarketGroupV16::new(market, V16Config::public_user_fund(4, 0, 10)).ok()?;
+    g.insurance_domain_budget[0] = budget_atoms;
+    g.insurance_domain_spent[0] = 0;
+    g.insurance = g.insurance_domain_budget[0].checked_mul(2)?;
+    g.vault = g.vault.checked_add(g.insurance)?;
+    g.insurance_credit_reservations[0].insurance_credit_reserved_num =
+        initial_reserved_atoms.checked_mul(BOUND_SCALE)?;
+    Some(g)
+}
+
+proptest! {
+    /// **Production refinement: reserve_insurance_credit_not_atomic matches
+    /// the Lean reference**. All quantities expressed in atoms (the
+    /// reference port's unit system); production's BOUND-unit field is
+    /// scaled by BOUND_SCALE under the hood.
+    #[test]
+    fn production_reserve_matches_reference(
+        budget_atoms in 100u128..=10_000u128,
+        initial_reserved_atoms in 0u128..=5_000u128,
+        amount_atoms in 0u128..=5_000u128,
+    ) {
+        prop_assume!(initial_reserved_atoms <= budget_atoms);
+
+        let Some(mut g) = setup_group_for_insurance_reserve(budget_atoms, initial_reserved_atoms)
+        else {
+            return Ok(());
+        };
+
+        let ref_pre = abstract_insurance(&g, 0);
+        prop_assert!(ref_pre.is_conserved());
+        let ref_post = ref_pre.reserve(amount_atoms);
+
+        // Production takes amount in BOUND-units.
+        let amount_bound = match amount_atoms.checked_mul(BOUND_SCALE) {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+        let prod_result = g.reserve_insurance_credit_not_atomic(0, amount_bound);
+
+        match (prod_result, ref_post) {
+            (Ok(()), Some(ref_post)) => {
+                let prod_post = abstract_insurance(&g, 0);
+                prop_assert_eq!(prod_post, ref_post);
+            }
+            (Err(_), None) => {}
+            (Ok(()), None) => {
+                prop_assert!(
+                    false,
+                    "production accepted reserve but reference rejected: budget={budget_atoms} reserved={initial_reserved_atoms} amount={amount_atoms}"
+                );
+            }
+            (Err(_), Some(_)) => {
+                // Production has stricter checks (e.g. global insurance
+                // cap, encumbrance proofs); refusing what reference
+                // accepts is OK in the refinement direction.
+            }
+        }
+    }
+
+    /// **Production-side conservation invariant**: a successful
+    /// `reserve_insurance_credit_not_atomic` leaves the per-domain
+    /// `reserved + spent ≤ budget` (in atoms) invariant intact.
+    #[test]
+    fn production_reserve_preserves_conservation(
+        budget_atoms in 100u128..=10_000u128,
+        initial_reserved_atoms in 0u128..=5_000u128,
+        amount_atoms in 0u128..=5_000u128,
+    ) {
+        prop_assume!(initial_reserved_atoms <= budget_atoms);
+
+        let Some(mut g) = setup_group_for_insurance_reserve(budget_atoms, initial_reserved_atoms)
+        else {
+            return Ok(());
+        };
+        let amount_bound = match amount_atoms.checked_mul(BOUND_SCALE) {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+
+        if g.reserve_insurance_credit_not_atomic(0, amount_bound).is_ok() {
+            let reserved_atoms = g.insurance_credit_reservations[0]
+                .insurance_credit_reserved_num
+                .div_ceil(BOUND_SCALE);
+            let budget = g.insurance_domain_budget[0];
+            prop_assert!(reserved_atoms + g.insurance_domain_spent[0] <= budget);
+        }
+    }
+
+    /// **Production reserve increments BOUND-num by exactly amount**: the
+    /// production field is in BOUND-units, so an `amount` of `N *
+    /// BOUND_SCALE` increments `insurance_credit_reserved_num` by
+    /// `N * BOUND_SCALE`.
+    #[test]
+    fn production_reserve_increments_by_amount(
+        budget_atoms in 100u128..=10_000u128,
+        initial_reserved_atoms in 0u128..=5_000u128,
+        amount_atoms in 0u128..=5_000u128,
+    ) {
+        prop_assume!(initial_reserved_atoms <= budget_atoms);
+
+        let Some(mut g) = setup_group_for_insurance_reserve(budget_atoms, initial_reserved_atoms)
+        else {
+            return Ok(());
+        };
+        let amount_bound = match amount_atoms.checked_mul(BOUND_SCALE) {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+
+        let pre = g.insurance_credit_reservations[0].insurance_credit_reserved_num;
+        if g.reserve_insurance_credit_not_atomic(0, amount_bound).is_ok() {
+            let post = g.insurance_credit_reservations[0].insurance_credit_reserved_num;
+            prop_assert_eq!(post, pre + amount_bound);
+        }
+    }
+}
