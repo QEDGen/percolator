@@ -1294,8 +1294,7 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 - `amountFromBoundNum_mono` — bigger `bn` ⇒ at-least-as-big amount.
 **Kani harnesses (concrete sanity):**
 - `proof_v16_scaled_junior_bound_remainder_ceil_controls_resolved_payout` `[SEMI]` — scaled-bound remainder ceiling enforced in Rust.
-- `proof_v16_ceil_div_positive_checked_matches_small_reference` (arithmetic) — ceil-div primitive matches reference.
-- `proof_v16_mul_div_ceil_u256_is_floor_plus_remainder_indicator` (arithmetic) — wide mul-div ceil correctness.
+**Note:** primitive ceil-div / wide mul-div-ceil sanity checks (formerly cited as dedicated Kani proofs) were retired upstream; their content survives implicitly through the higher-level proofs that use them, and is covered ∀ Nat by `amountFromBoundNum_rounds_up` / `_minimal` / `_exact` above.
 
 ### #16. `source_credit_insurance_reservation_single_canonical_writer`
 **Confidence:** LOW
