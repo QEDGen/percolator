@@ -282,13 +282,100 @@ The remaining work is now (b) — Rust↔Lean refinement bridges
 for the Phase 5 state machines.
 
 The arithmetic-kernel half is done (10 proptests cover
-`wide_math.rs`'s public surface). The next tier needs either:
-- Exposing private `MarketGroupV16` lifecycle helpers as
-  `pub(crate)` so proptests can call them directly, OR
-- Porting each Phase 5 Lean transition (Lien.create / consume,
-  BackingBucket.lienAgainst / expire, CloseLedger.bookSupport
-  etc.) to a Rust reference impl and diffing the production
-  handler against it at random states.
+`wide_math.rs`'s public surface). The Phase 5 state-machine layer
+is now in progress:
+
+- **InsuranceLedger** (DONE) — `tests/proofs_v16_lean_refinement_insurance.rs`
+  has a Rust reference port of `Percolator/InsuranceLedger.lean`
+  (5 fields, reserve/release/consume + the `applyWrite` closed-sum
+  router). 12 proptests verify the Lean theorems at runtime.
+- **BackingBucket** (DONE) — `tests/proofs_v16_lean_refinement_backing_bucket.rs`
+  has a Rust reference port of `Percolator/BackingBucket.lean`
+  (4-partition bucket + status + open/expire/lien_against/
+  consume_lien/release_lien/impair_lien). 13 proptests verify
+  every transition preserves `total_backing`, expire is
+  status-only, the "expire after partial lien" §14 #36 bound, and
+  conservation under arbitrary multi-step sequences.
+- **LienLifecycle** (DONE) — `tests/proofs_v16_lean_refinement_lien_lifecycle.rs`
+  has a Rust reference port of `Percolator/LienLifecycle.lean`
+  (Lien struct + create/consume/release/impair, plus
+  SourceCreditLienAggregate with counterparty/insurance fields).
+  13 proptests verify §14 #32 (create targets named source only),
+  §14 #37 (consume decrements by exactly the amount), §14
+  #19/#30 (impair conserves total_face; consume decrements by
+  exactly face), §14 #21/#31 (impair preserves backing while
+  growing impaired), release_eq_consume, and sequence
+  monotonicity.
+- **Activation + envelope** (DONE) —
+  `tests/proofs_v16_lean_refinement_activation.rs` has a Rust
+  reference port of `Percolator/Activation.lean` +
+  `YetMoreStrengthening.lean::ActivationEnvelope.Witness` +
+  `MoreStrengthening.lean::portfolioOKFromN`. 16 proptests verify
+  the all-flags-true / all_valid equivalence, per-envelope
+  derivation from numerical witnesses (§14 #59), the decoding
+  direction (`all_valid` implies each underlying inequality),
+  zero-state precondition (§14 #60), epoch bump (§14 #61), prior-
+  epoch cert invalidation (§14 #61), N > MAX rejection (§14 #88),
+  and invalid-lifecycle rejection.
+- **StockReconciliation** (DONE) —
+  `tests/proofs_v16_lean_refinement_stock_reconciliation.rs` has
+  a Rust reference port of `Percolator/StockReconciliation.lean`
+  (10-class vault partition, RoundingSplit, DriftReserveMapping).
+  11 proptests verify §14 #5 (reconciled iff V == totalV; empty
+  reconciled), §14 #97 (reconciled includes residue; residue
+  derivable from V), §14 #95 (flow_balances; applyResidue lands
+  in exactly one of two sinks; total_v grows by residue), §14
+  #98 (token_stock_contribution is amount iff QuoteEscrow else 0;
+  drift reserve carries exactly one class).
+- **BBookingExact** (DONE) —
+  `tests/proofs_v16_lean_refinement_b_booking.rs` has a Rust
+  reference port of `Percolator/BBookingExact.lean`
+  (b_booking_step + b_booking_rec). 8 proptests verify §14 #75
+  single-step conservation (delta_B * W + new_R = chunk * S + R),
+  remainder bound (< W), closed-form delta and remainder,
+  monotonicity in chunk, zero-chunk degenerate case, multi-chunk
+  conservation across arbitrary sequences, and final-remainder
+  bound.
+- **ValueFlowSoundness** (DONE) —
+  `tests/proofs_v16_lean_refinement_value_flow.rs` has a Rust
+  reference port of `Percolator/ValueFlow.lean` +
+  `Percolator/ValueFlowSoundness.lean` (TokenValueClass enum,
+  TokenValueRow, TokenValueFlow, plus named flow constructors
+  lien_create / internal_transfer / insurance_to_close_spent /
+  recovery_insurance_payout). 13 proptests verify §14 #2 (every
+  flow balanced), §14 #4 (lien creation is value-free), §14 #25
+  (internal transfers balanced and no vault delta), §14 #26
+  (row debit/credit_for own and other classes), §14 #27
+  (recovery payout decrements vault, shape is single
+  InsuranceCapital → ExternalQuote row, balanced).
+- **CloseLedger + ClosePriority** (DONE) —
+  `tests/proofs_v16_lean_refinement_close_ledger.rs` has a Rust
+  reference port of `Percolator/CloseLedger.lean` (20-field ledger
+  with book_support / book_insurance / book_b / book_explicit /
+  book_pending_obligation / add_drift / apply_quantity_adl /
+  finalize / cure_and_cancel transitions) plus
+  `Percolator/ClosePriority.lean` (4-component lex-comparable
+  priority). 16 proptests verify empty-ledger no-progress, every
+  booking preserves anchors and moves residual by exactly the
+  booked amount, addDrift increases residual, ADL requires zero
+  residual, cure-and-cancel requires no irreversible progress,
+  plus §14 #92 strict-total-order (irreflexivity, asymmetry,
+  transitivity, trichotomy) and §14 #93 distinct-closeId
+  comparability.
+
+All eight Tier 2 cluster bridges are now in place. The spec-side
+of the refinement bridge is complete:
+- 102 proptests in eight files covering each Phase 5 cluster.
+- Lean spec is now executable in Rust as reference impls.
+- All theorems are runtime-verified at randomly-sampled inputs.
+
+Next: connect each reference port to the production `v16.rs`
+state via an abstraction function and proptest the production
+handler against the reference. This is the final layer of the
+bridge — making the existing Rust production code's behavior
+match the Lean theorems at runtime. Each cluster needs a small
+`MarketGroupV16` fixture and an abstraction function projecting
+production state to the reference port.
 
 Or alternatively, advance toward Phase 6 (extraction): generate
 a reference Rust kernel from the Lean specs so the bridge is
