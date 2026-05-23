@@ -1160,6 +1160,17 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Harnesses:**
 - `proof_v16_source_lien_creation_has_valid_reservation_encumbrance_proof` `[CON]` — emits validated reservation encumbrance proof distinct from value flow.
 - `proof_v16_counterparty_lien_lifecycle_preserves_backing_encumbrance` `[SEMI]` — backing encumbrance moves on lien lifecycle without touching value totals.
+- **Lean closure**: `ReservationEncumbrance.lean::ReservationEncumbranceProof`
+  is a record carrying *only* reservation/backing counters (no
+  `debits` / `credits` / `externalQuote*` fields). The structural
+  distinction from `TokenValueFlow` is at the type level —
+  `encumbrance_has_no_value_flow_content` witnesses the absence
+  of value-flow content; `empty_encumbrance_corresponds_to_empty_flow`
+  shows that an empty encumbrance state has no value to extract.
+  `createCounterpartyLien` is the encumbrance-only transition
+  whose codomain is `ReservationEncumbranceProof`, not
+  `TokenValueFlow` — value-flow content is structurally absent
+  from the lien-creation path. Closes §14 #3.
 
 ### #4. `source_credit_lien_creation_moves_no_quote_value`
 **Confidence:** HIGH
@@ -1184,6 +1195,14 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 - `proof_v16_source_credit_rate_is_bounded_by_available_backing` `[SEMI]` — credit is bounded by available backing irrespective of claim magnitude.
 - `proof_v16_expired_fresh_backing_requires_refresh_before_source_credit_conversion` `[CON]` — stale backing blocks oracle-driven credit growth.
 **Note:** No harness directly stress-tests an oracle pump producing claim growth without matching backing, but the rate cap rules it out.
+- **Lean closure**: `OraclePumpLimit.lean::realized_credit_bounded_by_backing`
+  proves `(creditRateNum × claim) / CREDIT_RATE_SCALE ≤ available`
+  for any `claim > 0` — regardless of how big the claim grows
+  (oracle-pump scenario), the realizable credit cannot exceed
+  the available backing. `oracle_pump_cannot_exceed_backing` is
+  the direct corollary on a growing-claim sequence. Builds on
+  Phase 1's `creditRateNum_le_scale`, `_zero_backing`,
+  `_mono_in_backing`, and `_anti_in_claim`. Closes §14 #6.
 
 ### #7. `source_credit_rate_zero_when_backing_stale_or_exhausted`
 **Confidence:** HIGH
@@ -1229,6 +1248,21 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 - `proof_v16_expired_fresh_backing_requires_refresh_before_source_credit_conversion` `[CON]` — expired backing excluded from credit conversion.
 - `proof_v16_permissionless_crank_does_not_require_full_market_scan` `[SYM]` — bounded-work crank does not scan all accounts.
 **Note:** No direct harness on `backing_expiry_buckets` data structure; coverage is by observable effect.
+- **Lean closure**: `BoundedExpiryScan.lean::stale_excluded_by_local_check`
+  shows the per-bucket stale check (`isStale`) reads only the
+  `status` field of a single bucket — never any other bucket,
+  account, or market. `liveAvailable_local` proves
+  `liveAvailable`'s body is `if status = .Fresh then
+  freshUnliened else 0`, a one-bucket function by signature.
+  `sumLiveAvailable_signature_bounds_work` /
+  `_input_is_buckets_only` express the structural bounded-work
+  witness: the function type `List BackingBucket → Nat` rules
+  out scanning accounts or markets (which would need
+  `List Account → Nat` or `List Market → Nat`).
+  `sumLiveAvailable_zero_when_all_stale` is the full closure:
+  the aggregate excludes stale contributions by a per-bucket
+  local check; `sumLiveAvailable_eq_sum_over_fresh` exhibits the
+  partial-exclusion form for mixed lists. Closes §14 #12.
 
 ### #13. `insurance_credit_reservation_globally_conserved`
 **Confidence:** HIGH
@@ -1272,6 +1306,18 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Harnesses:**
 - `proof_v16_insurance_reservation_lifecycle_preserves_encumbrance` `[SEMI]` — reserved counter never exceeds `reserve` and consume reduces it by exactly `lien`.
 - `proof_v16_insurance_source_credit_lien_aggregate_tracks_account_backing_split` `[CON]` — proof aggregate sums account splits without overlap.
+- **Lean closure**: `NoDoubleSpend.lean::cannot_reserve_twice_beyond_capacity`
+  proves that two consecutive `reserve amount` calls require
+  `2 * amount` against the same deposit — if deposit = amount,
+  the second reserve fails closed.
+  `cannot_consume_twice_beyond_reservation` proves that after a
+  successful `reserve amount` + `consume amount`, the reservation
+  is empty (= 0) and a second `consume amount` fails closed.
+  `cumulative_reservation_bounded_by_deposit` is the structural
+  conservation invariant (reservation + spent ≤ deposit) carried
+  by the ledger; `consume_atom_either_reserved_or_spent` is the
+  atomic decrement witness — the same atom cannot be both
+  reserved and spent simultaneously. Closes §14 #17.
 
 ### #18. `insurance_backed_lien_creation_increments_valid_liened_insurance_not_counterparty_backing`
 **Confidence:** HIGH
@@ -1306,6 +1352,19 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Harnesses:**
 - `proof_v16_insurance_reservation_lifecycle_preserves_encumbrance` `[SEMI]` — consume increments `consumed_insurance_num` exactly once.
 **Note:** No harness specific to "residual cure" path on insurance-backed liens.
+- **Lean closure**: `ResidualCureOnce.lean::cureFromInsurance` is
+  a single atomic transition decrementing
+  `insuranceLienReserved`, incrementing `insuranceSpent`, and
+  decrementing `closeResidualRemaining` — all by the same
+  `amount`. `cureFromInsurance_charges_exactly_once` proves
+  spent increments by exactly amount;
+  `_decrements_lien_once` proves the lien drops by the same
+  amount; `_decrements_residual` proves the residual drops
+  similarly;
+  `cureFromInsurance_lien_drop_matches_spent_increment` is the
+  composed identity — the same atom is consumed from the lien
+  and recorded once on spent, never both undercharged or
+  doublecharged. Closes §14 #22.
 
 ### #23. `insurance_backed_lien_never_counts_as_both_support_and_insurance`
 **Confidence:** MEDIUM
@@ -1472,6 +1531,17 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 - `proof_v16_stale_profitable_leg_cannot_withdraw_using_pre_refresh_positive_pnl` `[CON]` — disallows over-withdraw on profitable but stale leg.
 - `proof_v16_loss_stale_blocks_nonflat_withdrawal` `[CON]` — loss-stale state blocks withdrawal.
 - `proof_v16_partial_withdraw_can_leave_small_remainder` `[SEMI]` — partial-withdraw conservative path.
+- **Lean closure**: `ConservativeWithdrawal.lean::sumLoss_ge_maxLoss`
+  proves `maxLoss ≤ sumLoss` over arbitrary lists of leg losses
+  — the structural inequality that distinguishes the conservative
+  formula (subtract sum of all losses) from the aggregate-min
+  formula (subtract just the max). `conservative_le_aggregate_min`
+  is the corollary on withdrawal capacity: the conservative
+  formula never permits a strictly larger withdrawal.
+  `aggregate_min_overstates_with_two_losses` is the counterexample:
+  with two legs each losing k, the sum is 2k but the max is k,
+  so the aggregate-min formula would over-credit a withdrawal
+  by k. Closes §14 #45.
 
 ### #46. `close_drift_reserve_has_backed_loss_capacity_or_recovers`
 **Confidence:** MEDIUM
@@ -1501,6 +1571,12 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Harnesses:**
 - `proof_v16_public_invariants_reject_scaled_junior_bound_cache_mismatch` `[SEMI]` — cache desync rejected.
 **Note:** No targeted harness on out-of-range bucket re-bucketing.
+- **Lean closure**: `ClaimBoundBucketRange.lean::BucketRangeOutcome`
+  is a closed sum (inRange | failClosed | rebucketed).
+  `queryBucket_is_one_of_three` proves exhaustiveness;
+  `out_of_range_does_not_return_inRange` rules out silent
+  overflow; `rebucketed_clamps_into_range` proves a re-bucketed
+  index is provably in range. Closes §14 #49.
 
 ### #50. `credit_rate_recomputation_is_bounded_by_domain_count_and_bucket_count`
 **Confidence:** LOW
@@ -1542,6 +1618,17 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Harnesses:**
 - `proof_v16_trade_hint_cannot_hide_toxic_portfolio_leg_on_other_asset` `[CON]` — toxic other-asset leg cannot be hidden by hint.
 - `proof_v16_bad_asset_cannot_spend_unrelated_domain_insurance_budget` `[SEMI]` — cross-domain insurance theft blocked.
+- **Lean closure**: `CrossAssetIsolation.lean::AssetExposure` is
+  type-indexed by `AssetTag` (a phantom Nat); two exposures on
+  different assets have different types. `AssetExposure.realize`
+  is the only path that produces fungible `Capital` from a typed
+  exposure; the realization runs on a single tag — there is no
+  cross-tag combinator. `takeRisk` requires `Capital` (not a
+  different-tag exposure) — `takeRisk_requires_capital` and
+  `_success_decrements_capital` witness the strict-capital
+  consumption. The type system rules out functions that combine
+  `AssetExposure tagA` and `AssetExposure tagB` directly.
+  Closes §14 #54.
 
 ### #55. `backing_consumption_reduces_loser_capital_and_preserves_senior_invariants`
 **Confidence:** HIGH
@@ -1600,12 +1687,31 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 - `proof_v16_favorable_action_requires_current_full_refresh` `[CON]` — direct claim.
 - `proof_v16_health_certificate_bound_to_market_epochs_and_prices` `[SEMI]` — cert binding.
 - `proof_v16_favorable_locks_block_released_pnl_conversion_before_mutation` `[SEMI]` — locks block favorable actions.
+- **Lean closure**: `FavorableActions.lean::FavorableActionKind.tryExecute`
+  matches on the snapshot's `refresh : RefreshStatus` field and
+  refuses to fire on `.Stale`. `tryExecute_blocked_when_stale`
+  proves all three favorable-action kinds (Withdraw,
+  IncreaseLeverage, UnlockCollateral) fail closed on stale
+  snapshots; `tryExecute_some_implies_fresh` is the
+  contrapositive: a successful action proves the snapshot was
+  `.Fresh`. The closed-sum `RefreshStatus` guarantees the only
+  path to `.Fresh` is via `markRefreshed` (corresponding to the
+  production engine's full-refresh routine). Closes §14 #62.
 
 ### #63. `verified_maker_exemption_requires_engine_verified_post_trade_health_cert`
 **Confidence:** NONE
 **Strength:** N/A
 **Harnesses:** _No matching harness found._
 **Note:** No proof targeting a "verified maker" exemption path; if implemented, would assert that the exemption requires engine-verified post-trade cert.
+- **Lean closure**: `VerifiedMaker.lean::PostTradeHealthCert`
+  carries an origin tag from the closed-sum `CertOrigin`
+  (engineVerified | userSupplied). `tryVerifiedMakerExemption`
+  pattern-matches on origin and refuses to fire on
+  `.userSupplied`.
+  `tryVerifiedMakerExemption_blocked_when_user_supplied` and
+  `_some_implies_engine_verified` are the contrapositive pair;
+  `_engine_verified_fires` is the positive direction. Same
+  pattern as §14 #62. Closes §14 #63.
 
 ### #64. `pending_obligation_credit_decrements_origin_residual_once`
 **Confidence:** MEDIUM
@@ -1620,6 +1726,15 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Harnesses:**
 - `proof_v16_b_residual_booking_makes_durable_progress_or_fails_closed` `[SEMI]` — booking is bounded and durable.
 **Note:** Big-O complexity is not explicitly modeled; Kani's `unwind` bound implies boundedness.
+- **Lean closure**: `AggregateDriftCredit.lean::DriftCreditAggregate`
+  is a single-Nat record. `read : DriftCreditAggregate → Nat` is
+  a direct field projection; the function's signature rules out
+  any list traversal. `credit` and `debit` are incremental
+  updates that operate on the aggregate alone (no per-account
+  scan). `hasDriftCapacity` is the typed B-booking precondition
+  with signature `DriftCreditAggregate → Nat → Bool` — a single
+  comparison against a single field. Closes §14 #65 with the
+  structural-locality pattern (same as #12 and #85).
 
 ### #66. `participant_finalization_pulls_forward_pending_obligation`
 **Confidence:** MEDIUM
@@ -1716,6 +1831,18 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 - `proof_v16_resolved_payout_uses_positive_bound_denominator` `[CON]` — conservative bound denominator.
 - `proof_v16_resolved_positive_payout_snapshot_is_order_stable` `[CON]` — snapshot order-stable.
 - `proof_v16_resolved_payout_readiness_uses_exact_counters_and_bounds` `[SEMI]` — uses exact counters.
+- **Lean closure**: `ResolvedPayoutRate.lean::ResolutionRateContext`
+  carries the per-domain and aggregate rates; `payoutRateNum :=
+  min(perDomainRateNum, aggregateRateNum)` is the spec formula.
+  `payoutRateNum_le_perDomain` and `_le_aggregate` prove the
+  chosen rate is bounded above by *both* inputs — so neither
+  domain-level nor cross-domain insolvency can be silently
+  over-paid. `payoutRateNum_equals_one_of_two` is the closed-
+  world: the rate is exactly one of the two, never an ad-hoc
+  third value. `max_rate_overstates_when_rates_differ` is the
+  strict counterexample showing the forbidden "max-rate"
+  formula always over-pays. Same pattern as §14 #45. Closes
+  §14 #78.
 
 ### #79. `resolved_receipt_underbound_halts_payout_or_recovers`
 **Confidence:** HIGH
@@ -1724,6 +1851,18 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 - `proof_v16_unfinalized_resolved_receipt_blocks_account_close_until_topup` `[SEMI]` — under-bound receipt blocks close until top-up.
 - `proof_v16_resolved_receipt_tracks_paid_effective_and_bound_refinement_topup` `[SEMI]` — top-up refinement path.
 - `proof_v16_pnl_pos_bound_tot_prevents_lazy_positive_pnl_first_mover_overpay` `[CON]` — under-bound first-mover overpay prevented.
+- **Lean closure**: `ReceiptUnderbound.lean::ReceiptOutcome`
+  is a closed sum of three constructors (`paid` /
+  `haltedPendingTopup` / `routedToRecovery`).
+  `ResolvedReceipt.process` returns one of the three based on
+  payment state and recovery eligibility.
+  `underbound_does_not_pay` proves under-bound receipts can't
+  return `.paid`; `underbound_halts_or_recovers` is the positive
+  form. `paid_implies_fully_paid` is the contrapositive. The
+  closed-world `process_is_one_of_three` dichotomy plus
+  `recovery_branch_requires_underbound` /
+  `halted_branch_requires_underbound_and_no_recovery` rule out
+  spurious routing. Closes §14 #79.
 
 ### #80. `recovery_fallback_price_within_configured_deviation_envelope`
 **Confidence:** NONE
@@ -1763,6 +1902,18 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Harnesses:**
 - `proof_v16_permissionless_crank_does_not_require_full_market_scan` `[SYM]` — direct match.
 - `proof_v16_worst_case_hinted_progress_actions_are_total_and_bounded` `[SEMI]` — worst-case hinted progress bounded.
+- **Lean closure**: `NoFullMarketScan.lean::MarketState` models
+  the asset array as an indexed function `assetAt : AssetIndex →
+  AssetSlot`; `lookup` is a direct application — by Lean's
+  evaluation model, an O(1) lookup. `PerAssetOp.apply` has
+  signature `AssetIndex → AssetSlot → AssetSlot` — the operation
+  reads exactly one slot. `applyAtIndex_preserves_other_slots`
+  proves a single per-asset operation leaves every non-targeted
+  slot unchanged — the structural no-scan witness. The
+  composition `PerAssetOp.compose` also stays per-slot; the type
+  system rules out a full-market scan inside a per-asset
+  operation's body. Closes §14 #85 with the structural-locality
+  pattern (same as #12 and #65).
 
 ### #86. `global_accumulator_not_account_health_proof`
 **Confidence:** HIGH
@@ -1828,6 +1979,18 @@ the spec invariant looks covered, but the coverage is only at hand-picked inputs
 **Harnesses:**
 - `proof_v16_b_residual_booking_makes_durable_progress_or_fails_closed` `[SEMI]` — booking triggers recompute or close.
 - `proof_v16_passive_backing_consumption_preserves_senior_accounting_without_wrapper_injection` `[CON]` — claim bound recomputed conservatively.
+- **Lean closure**: `BBookingResponse.lean::BBookingResponse`
+  is a closed sum (recomputed | conservativelyLowered).
+  `bBookingStepResponse` returns one of the two based on the
+  engine's recompute flag.
+  `step_response_is_one_of_two` is the closed-world dichotomy.
+  `lowered_never_raises_cache` proves the conservative-lowering
+  branch never increases cached claim_bound or credit_rate.
+  `recomputed_uses_fresh_values` proves the recompute branch
+  produces the fresh inputs verbatim.
+  `no_silent_upward_drift` bounds the post-state credit_rate
+  by `max(pre.rate, fresh)` regardless of branch — no path
+  silently exceeds both. Closes §14 #94.
 
 ### #95. `settlement_rounding_residue_credits_unallocated_surplus_and_flow_proof_balances`
 **Confidence:** MEDIUM

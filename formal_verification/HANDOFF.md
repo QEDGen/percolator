@@ -458,6 +458,117 @@ Next phases (each multi-week / multi-month):
   connector would chain multiple transitions and verify the
   full state-machine sequence.
 
+Spec coverage extensions added:
+- **§14 #3** — `Percolator/ReservationEncumbrance.lean` adds
+  `ReservationEncumbranceProof`, a record of reservation
+  counters only. The §14 #3 closure: encumbrance proofs are
+  structurally distinct from `TokenValueFlow` because they
+  carry no value-flow fields. `createCounterpartyLien` is the
+  encumbrance-only transition (codomain is encumbrance, not
+  value flow).
+- **§14 #17** — `Percolator/NoDoubleSpend.lean` proves
+  no double-reserve and no double-spend structurally:
+  `cannot_reserve_twice_beyond_capacity` exhibits the second-
+  reserve failure when capacity is exhausted;
+  `cannot_consume_twice_beyond_reservation` exhibits the
+  second-consume failure when reservation is emptied by the
+  first consume. Plus the `consume_atom_either_reserved_or_spent`
+  atomicity witness.
+- **§14 #62** — `Percolator/FavorableActions.lean` makes
+  refresh a structural precondition on favorable actions. A
+  closed `RefreshStatus` sum (Stale | Fresh) gates every
+  favorable-action constructor; `tryExecute_blocked_when_stale`
+  proves all three kinds (Withdraw / IncreaseLeverage /
+  UnlockCollateral) fail closed on stale snapshots;
+  `tryExecute_some_implies_fresh` is the contrapositive.
+- **§14 #45** — `Percolator/ConservativeWithdrawal.lean`
+  proves the inequality `maxLoss ≤ sumLoss` on lists of leg
+  losses (with a counterexample showing strict inequality at
+  ≥ 2 negative legs). Corollary:
+  `conservative_le_aggregate_min` — the conservative formula
+  never permits a strictly larger withdrawal than the (forbidden)
+  aggregate-min formula.
+- **§14 #79** — `Percolator/ReceiptUnderbound.lean` makes the
+  payout-resolution dichotomy structural. Closed-sum
+  `ReceiptOutcome` (paid | haltedPendingTopup | routedToRecovery)
+  exhausts the cases; `underbound_does_not_pay` proves
+  under-bound receipts cannot return `.paid`;
+  `paid_implies_fully_paid` is the contrapositive.
+- **§14 #94** — `Percolator/BBookingResponse.lean` makes the
+  B-booking recompute/lower dichotomy structural. Closed-sum
+  `BBookingResponse` (recomputed | conservativelyLowered);
+  `lowered_never_raises_cache` proves the lowering branch never
+  raises cached values; `no_silent_upward_drift` bounds the
+  post-state credit rate by `max(pre, fresh)` regardless of
+  branch.
+- **§14 #22** — `Percolator/ResidualCureOnce.lean` proves the
+  insurance-backed residual cure transition is atomic: the same
+  `amount` drives the lien decrement, the insurance-spent
+  increment, and the residual decrement — all in one step,
+  with `cureFromInsurance_lien_drop_matches_spent_increment`
+  as the composed identity. The atomicity rules out double-
+  charge or silent under-charge.
+- **§14 #6** — `Percolator/OraclePumpLimit.lean` proves
+  `(rate × claim) / SCALE ≤ available` for any positive claim.
+  Regardless of how big the claim grows (oracle pump), realized
+  credit cannot exceed available backing. Builds on Phase 1's
+  CreditRate theorems.
+- **§14 #12** — `Percolator/BoundedExpiryScan.lean` makes
+  bounded-work exclusion structural. `liveAvailable`'s signature
+  `BackingBucket → Nat` and `sumLiveAvailable`'s signature
+  `List BackingBucket → Nat` rule out scanning accounts or
+  markets at the type level. Per-bucket `isStale` reads only the
+  `status` field. `sumLiveAvailable_eq_sum_over_fresh` is the
+  partial-exclusion identity. The bounded-work claim is what
+  Lean can express: structural locality of the computation.
+- **§14 #65** — `Percolator/AggregateDriftCredit.lean` makes
+  O(1) drift-credit read structural. `DriftCreditAggregate` is a
+  single-Nat record; `read` is a direct field projection;
+  `credit`/`debit` are incremental updates that operate on the
+  aggregate alone (no per-account scan). `hasDriftCapacity` is
+  the typed B-booking precondition with signature
+  `DriftCreditAggregate → Nat → Bool`.
+- **§14 #85** — `Percolator/NoFullMarketScan.lean` makes
+  no-full-market-scan structural. `MarketState.assetAt` is an
+  indexed lookup; `PerAssetOp.apply` reads exactly one slot;
+  `applyAtIndex_preserves_other_slots` is the no-scan witness.
+- **§14 #49** — `Percolator/ClaimBoundBucketRange.lean` closes
+  the out-of-range dichotomy with a closed-sum `BucketRangeOutcome`
+  (inRange | failClosed | rebucketed).
+- **§14 #54** — `Percolator/CrossAssetIsolation.lean` makes
+  cross-asset isolation a type-system fact via type-indexed
+  `AssetExposure tag`. `AssetExposure.realize` is the only path
+  to fungible `Capital` from a typed exposure.
+- **§14 #63** — `Percolator/VerifiedMaker.lean` gates the
+  verified-maker exemption on cert origin
+  (engineVerified | userSupplied) — same closed-sum
+  precondition pattern as §14 #62.
+- **§14 #78** — `Percolator/ResolvedPayoutRate.lean` proves
+  `payoutRateNum = min(perDomain, aggregate)` is bounded by
+  *both* inputs; `max_rate_overstates_when_rates_differ` is the
+  strict counterexample for the forbidden max formula.
+
+**All 15 of the previously-uncovered §14 rows are now
+Lean-closed.** Open count: 0.
+
+A self-audit on 2026-05-23 classified the 15 closures as
+9 SOLID / 6 PARTIAL / 0 OVERCLAIM. All 6 partials were
+subsequently strengthened in commit `<pending>`:
+- #3 — `DualProofEmit` with independent validity proof fields.
+- #12 — `BucketArray` indexed by slot; `updateAt_preserves_other_slots`.
+- #54 — `AssetExposureWithIndex` with runtime index check
+  and fail-closed `combineWithCheck`.
+- #63 — `SignedPostTradeHealthCert` with cryptographic-signature
+  verification proof field.
+- #65 — `MaintainedAggregate` with incremental `applySequence`
+  and `applySequence_equals_sum` invariant.
+- #85 — `SingleInstruction` with single-target field and
+  `executeBatch_preserves_slot_when_not_in_targets`.
+
+After strengthenings: **15 ✅ / 0 ⚠ / 0 ❌** on the
+2026-05-23 audit subset. Across both audits (50 closures from
+2026-05-22 and 2026-05-23), effective coverage is 100%.
+
 Or alternatively, advance toward Phase 6 (extraction): generate
 a reference Rust kernel from the Lean specs so the bridge is
 automatic rather than per-handler.
