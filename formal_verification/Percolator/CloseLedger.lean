@@ -21,6 +21,7 @@
 
 import Percolator.Defs
 import Percolator.Lifecycle
+import Percolator.Lien
 import Mathlib.Tactic.Linarith
 
 namespace Percolator.Spec
@@ -728,6 +729,353 @@ structure WeightAttribution where
     tries to build one with `backing = 0` fails the `backed` field. -/
 theorem weight_attribution_has_positive_backing (w : WeightAttribution) :
     0 < w.backing := w.backed
+
+-- ============================================================================
+-- §14 #24: per-lien categorization disjoint by typing
+-- ============================================================================
+
+/-- A typed lien-consumption transition that routes to exactly one
+    of the two close-residual categories based on the lien's
+    `BackingSource`. A counterparty-backed lien debits
+    `supportConsumed`; an insurance-backed lien debits
+    `insuranceSpent`. The match is total over `BackingSource`, so a
+    third "uncategorized" path is unrepresentable. -/
+def consumeLienForResidual
+    {src : BackingSource} (l : CloseLedger) (_lien : Lien src) (amount : Nat) :
+    Option CloseLedger :=
+  match src with
+  | .Counterparty => l.bookSupport amount
+  | .Insurance    => l.bookInsurance amount
+
+/-- **§14 #24 (counterparty lien debits supportConsumed only)**: when
+    the consumed lien is counterparty-backed, only `supportConsumed`
+    increases — `insuranceSpent` is provably unchanged. -/
+theorem consumeLienForResidual_counterparty_touches_support_only
+    (l l' : CloseLedger) (lien : Lien BackingSource.Counterparty)
+    (amount : Nat)
+    (h : l.consumeLienForResidual lien amount = some l') :
+    l'.insuranceSpent = l.insuranceSpent := by
+  unfold consumeLienForResidual at h
+  unfold bookSupport at h
+  by_cases ha : !l.active || l.finalized || l.canceled
+  · simp [ha] at h
+  by_cases hr : l.residualRemaining < amount
+  · simp [ha, hr] at h
+  · simp [ha, hr] at h
+    have hl' := h.symm
+    rw [hl']
+
+/-- **§14 #24 (insurance lien debits insuranceSpent only)**: when
+    the consumed lien is insurance-backed, only `insuranceSpent`
+    increases — `supportConsumed` is provably unchanged. -/
+theorem consumeLienForResidual_insurance_touches_insurance_only
+    (l l' : CloseLedger) (lien : Lien BackingSource.Insurance)
+    (amount : Nat)
+    (h : l.consumeLienForResidual lien amount = some l') :
+    l'.supportConsumed = l.supportConsumed := by
+  unfold consumeLienForResidual at h
+  unfold bookInsurance at h
+  by_cases ha : !l.active || l.finalized || l.canceled
+  · simp [ha] at h
+  by_cases hr : l.residualRemaining < amount
+  · simp [ha, hr] at h
+  · simp [ha, hr] at h
+    have hl' := h.symm
+    rw [hl']
+
+/-- **§14 #24 (categorization is total and disjoint)**: every typed
+    lien is classified by exactly one of `Counterparty` or
+    `Insurance`. There is no path that increments both categories
+    for the same lien, and there is no path that increments neither
+    when a consume fires.
+
+    The closed-world `BackingSource` enum (cluster 1 typing) provides
+    the structural witness. -/
+theorem consumeLienForResidual_targets_one_category
+    {src : BackingSource} :
+    src = .Counterparty ∨ src = .Insurance := by
+  cases src
+  · exact .inl rfl
+  · exact .inr rfl
+
+-- ============================================================================
+-- §14 #46: typed continuation outcome with no third path
+-- ============================================================================
+
+/-- The outcome of a close-progress continuation attempt: either a
+    successful step under backed drift reserve, or an explicit
+    routing to recovery when the reserve is unbacked. The closed sum
+    forbids a "continue without backing" path. -/
+inductive ContinuationOutcome : Type where
+  | continued       (l : CloseLedger) : ContinuationOutcome
+  | routedToRecovery (reason : String) : ContinuationOutcome
+  deriving Repr
+
+namespace ContinuationOutcome
+
+/-- Is this outcome a continuation (i.e. drift-backed step)? -/
+def isContinued : ContinuationOutcome → Bool
+  | .continued _ => true
+  | .routedToRecovery _ => false
+
+/-- Is this outcome a recovery routing? -/
+def isRecovery : ContinuationOutcome → Bool
+  | .continued _ => false
+  | .routedToRecovery _ => true
+
+end ContinuationOutcome
+
+/-- **Gated continuation**: a close-progress booking that fires only
+    when the drift reserve is provably backed. Otherwise routes to
+    recovery via the spec-mandated path.
+
+    Per `spec.md:1252-1262`: "If [the drift reserve] cannot be
+    backed, ordinary close continuation MUST route to recovery." -/
+def continueOrRecover
+    (l : CloseLedger) (driftReserve : Nat) (backing : DriftBacking)
+    (amount : Nat) : ContinuationOutcome :=
+  if closeDriftReserveBacked driftReserve backing then
+    match l.bookSupport amount with
+    | some l' => .continued l'
+    | none    => .routedToRecovery "bookSupport precondition failed"
+  else
+    .routedToRecovery "drift reserve not backed"
+
+/-- **§14 #46 (no continuation without backing)**: if the outcome is
+    `continued`, the drift-reserve backing predicate must have
+    held. There is no path that produces `continued` without backing. -/
+theorem continueOrRecover_continued_implies_backed
+    (l l' : CloseLedger) (driftReserve : Nat) (backing : DriftBacking)
+    (amount : Nat)
+    (h : continueOrRecover l driftReserve backing amount = .continued l') :
+    closeDriftReserveBacked driftReserve backing := by
+  unfold continueOrRecover at h
+  by_cases hbacked : closeDriftReserveBacked driftReserve backing
+  · exact hbacked
+  · simp [hbacked] at h
+
+/-- **§14 #46 (unbacked routes to recovery)**: when the backing
+    predicate fails, the outcome is provably `routedToRecovery` —
+    never `continued`. -/
+theorem continueOrRecover_unbacked_routes_recovery
+    (l : CloseLedger) (driftReserve : Nat) (backing : DriftBacking)
+    (amount : Nat)
+    (h : ¬ closeDriftReserveBacked driftReserve backing) :
+    (continueOrRecover l driftReserve backing amount).isRecovery = true := by
+  unfold continueOrRecover ContinuationOutcome.isRecovery
+  simp [h]
+
+/-- **§14 #46 (closed-world dichotomy)**: every outcome is either a
+    continuation or a recovery routing — no third "continue without
+    routing" case. -/
+theorem continueOrRecover_dichotomy
+    (l : CloseLedger) (driftReserve : Nat) (backing : DriftBacking)
+    (amount : Nat) :
+    let outcome := continueOrRecover l driftReserve backing amount
+    outcome.isContinued = true ∨ outcome.isRecovery = true := by
+  unfold continueOrRecover
+  by_cases hbacked : closeDriftReserveBacked driftReserve backing
+  · simp [hbacked]
+    cases hb : l.bookSupport amount with
+    | none => simp [ContinuationOutcome.isContinued, ContinuationOutcome.isRecovery]
+    | some _ => simp [ContinuationOutcome.isContinued, ContinuationOutcome.isRecovery]
+  · simp [hbacked]
+    simp [ContinuationOutcome.isContinued, ContinuationOutcome.isRecovery]
+
+-- ============================================================================
+-- §14 #71: aggregate net-of-drift conservation over a transition sequence
+-- ============================================================================
+
+/-- A single closure operation in the booking sequence: either a
+    booking that decrements residual, or a drift accrual that
+    increments it. Other transitions (finalize, cureAndCancel,
+    applyQuantityAdl) don't affect residual and are excluded here. -/
+inductive ResidualMove : Type where
+  | bookSupport   (amount : Nat) : ResidualMove
+  | bookInsurance (amount : Nat) : ResidualMove
+  | bookB         (amount : Nat) : ResidualMove
+  | bookExplicit  (amount : Nat) : ResidualMove
+  | bookPending   (amount : Nat) : ResidualMove
+  | drift         (delta  : Nat) : ResidualMove
+  deriving Repr
+
+namespace ResidualMove
+
+/-- Apply one residual move. -/
+def apply (l : CloseLedger) : ResidualMove → Option CloseLedger
+  | .bookSupport   amount => l.bookSupport amount
+  | .bookInsurance amount => l.bookInsurance amount
+  | .bookB         amount => l.bookB amount
+  | .bookExplicit  amount => l.bookExplicit amount
+  | .bookPending   amount => l.bookPendingObligation amount
+  | .drift         delta  => l.addDrift delta
+
+/-- The total residual-debit amount in this move (zero for drift). -/
+def bookingAmount : ResidualMove → Nat
+  | .bookSupport   amount => amount
+  | .bookInsurance amount => amount
+  | .bookB         amount => amount
+  | .bookExplicit  amount => amount
+  | .bookPending   amount => amount
+  | .drift         _      => 0
+
+/-- The total residual-credit amount (drift increment). -/
+def driftAmount : ResidualMove → Nat
+  | .drift delta => delta
+  | _            => 0
+
+end ResidualMove
+
+/-- Apply a sequence of residual moves. Returns `none` if any
+    transition fails its precondition. -/
+def applyMoves (l : CloseLedger) : List ResidualMove → Option CloseLedger
+  | [] => some l
+  | m :: rest =>
+    match m.apply l with
+    | none => none
+    | some l' => l'.applyMoves rest
+
+/-- Total bookings across a sequence. -/
+def totalBookings (moves : List ResidualMove) : Nat :=
+  (moves.map ResidualMove.bookingAmount).sum
+
+/-- Total drift across a sequence. -/
+def totalDrift (moves : List ResidualMove) : Nat :=
+  (moves.map ResidualMove.driftAmount).sum
+
+/-- Per-move residual change: a booking decreases by its amount, a
+    drift increases by its delta. Returns the difference
+    `new.residualRemaining - old.residualRemaining` plus an existence
+    witness for the resulting ledger. -/
+theorem ResidualMove.apply_residual_delta
+    (l l' : CloseLedger) (m : ResidualMove) (h : m.apply l = some l') :
+    l'.residualRemaining + m.bookingAmount
+    = l.residualRemaining + m.driftAmount := by
+  cases m with
+  | bookSupport amount =>
+    unfold ResidualMove.apply ResidualMove.bookingAmount ResidualMove.driftAmount at *
+    unfold CloseLedger.bookSupport at h
+    by_cases ha : !l.active || l.finalized || l.canceled
+    · simp [ha] at h
+    by_cases hr : l.residualRemaining < amount
+    · simp [ha, hr] at h
+    · simp [ha, hr] at h
+      have hl' := h.symm
+      rw [hl']
+      change l.residualRemaining - amount + amount = l.residualRemaining + 0
+      omega
+  | bookInsurance amount =>
+    unfold ResidualMove.apply ResidualMove.bookingAmount ResidualMove.driftAmount at *
+    unfold CloseLedger.bookInsurance at h
+    by_cases ha : !l.active || l.finalized || l.canceled
+    · simp [ha] at h
+    by_cases hr : l.residualRemaining < amount
+    · simp [ha, hr] at h
+    · simp [ha, hr] at h
+      have hl' := h.symm
+      rw [hl']
+      change l.residualRemaining - amount + amount = l.residualRemaining + 0
+      omega
+  | bookB amount =>
+    unfold ResidualMove.apply ResidualMove.bookingAmount ResidualMove.driftAmount at *
+    unfold CloseLedger.bookB at h
+    by_cases ha : !l.active || l.finalized || l.canceled
+    · simp [ha] at h
+    by_cases hr : l.residualRemaining < amount
+    · simp [ha, hr] at h
+    · simp [ha, hr] at h
+      have hl' := h.symm
+      rw [hl']
+      change l.residualRemaining - amount + amount = l.residualRemaining + 0
+      omega
+  | bookExplicit amount =>
+    unfold ResidualMove.apply ResidualMove.bookingAmount ResidualMove.driftAmount at *
+    unfold CloseLedger.bookExplicit at h
+    by_cases ha : !l.active || l.finalized || l.canceled
+    · simp [ha] at h
+    by_cases hr : l.residualRemaining < amount
+    · simp [ha, hr] at h
+    · simp [ha, hr] at h
+      have hl' := h.symm
+      rw [hl']
+      change l.residualRemaining - amount + amount = l.residualRemaining + 0
+      omega
+  | bookPending amount =>
+    unfold ResidualMove.apply ResidualMove.bookingAmount ResidualMove.driftAmount at *
+    unfold CloseLedger.bookPendingObligation at h
+    by_cases ha : !l.active || l.finalized || l.canceled
+    · simp [ha] at h
+    by_cases hr : l.residualRemaining < amount
+    · simp [ha, hr] at h
+    · simp [ha, hr] at h
+      have hl' := h.symm
+      rw [hl']
+      change l.residualRemaining - amount + amount = l.residualRemaining + 0
+      omega
+  | drift delta =>
+    unfold ResidualMove.apply ResidualMove.bookingAmount ResidualMove.driftAmount at *
+    unfold CloseLedger.addDrift at h
+    by_cases ha : !l.active || l.finalized || l.canceled
+    · simp [ha] at h
+    · simp [ha] at h
+      have hl' := h.symm
+      rw [hl']
+      change l.residualRemaining + delta + 0 = l.residualRemaining + delta
+      omega
+
+/-- **§14 #71 (aggregate net-of-drift conservation)**: after an
+    arbitrary sequence of residual moves, the residual change equals
+    `totalDrift - totalBookings`. When `totalBookings ≥ totalDrift`,
+    residual non-strictly decreases — close progress dominates drift
+    in aggregate.
+
+    This is the §14 #71 spec claim lifted from per-step to the full
+    sequence. -/
+theorem applyMoves_residual_conservation
+    (l l' : CloseLedger) (moves : List ResidualMove)
+    (h : l.applyMoves moves = some l') :
+    l'.residualRemaining + totalBookings moves
+    = l.residualRemaining + totalDrift moves := by
+  induction moves generalizing l with
+  | nil =>
+    unfold applyMoves at h
+    cases h
+    unfold totalBookings totalDrift
+    simp
+  | cons m rest ih =>
+    unfold applyMoves at h
+    cases hm : m.apply l with
+    | none => rw [hm] at h; cases h
+    | some l1 =>
+      rw [hm] at h
+      have hstep := ResidualMove.apply_residual_delta l l1 m hm
+      have hrest := ih l1 h
+      unfold totalBookings totalDrift
+      simp [List.map_cons, List.sum_cons]
+      unfold totalBookings totalDrift at hrest
+      omega
+
+/-- **§14 #71 (net-decrease when bookings dominate drift)**: if the
+    total booked amount equals or exceeds total drift, residual
+    non-strictly decreases across the sequence. -/
+theorem applyMoves_residual_decreases_when_bookings_dominate
+    (l l' : CloseLedger) (moves : List ResidualMove)
+    (h : l.applyMoves moves = some l')
+    (hdom : totalDrift moves ≤ totalBookings moves) :
+    l'.residualRemaining ≤ l.residualRemaining := by
+  have hcons := applyMoves_residual_conservation l l' moves h
+  omega
+
+/-- **§14 #71 (strict decrease when bookings strictly dominate
+    drift)**: if total bookings strictly exceed total drift,
+    residual strictly decreases. -/
+theorem applyMoves_residual_strictly_decreases
+    (l l' : CloseLedger) (moves : List ResidualMove)
+    (h : l.applyMoves moves = some l')
+    (hdom : totalDrift moves < totalBookings moves) :
+    l'.residualRemaining < l.residualRemaining := by
+  have hcons := applyMoves_residual_conservation l l' moves h
+  omega
 
 end CloseLedger
 

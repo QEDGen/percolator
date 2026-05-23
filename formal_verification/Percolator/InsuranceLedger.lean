@@ -19,6 +19,7 @@
 -/
 
 import Percolator.Defs
+import Percolator.BoundArith
 import Mathlib.Tactic.Linarith
 
 namespace Percolator.Spec
@@ -234,6 +235,73 @@ theorem reservedPlusSpent_le_deposit (l : InsuranceLedger) :
     l.sourceCreditReservedNum + l.domainSpent ≤ l.initialDeposited := by
   have := l.conservation
   omega
+
+-- ============================================================================
+-- §14 #20: consume with explicit BOUND-unit ↔ vault-atom conversion
+-- ============================================================================
+
+/-- Spend-atoms conversion per `spec.md:493`:
+    `spend_atoms = amount_from_bound_num_up(amount)`.
+
+    Mirrors the BOUND-units → vault-atom unit step the spec performs
+    on every insurance consume. -/
+def spendAtomsFor (amount : Nat) : Nat :=
+  amountFromBoundNum amount
+
+/-- **`consume` with explicit spend-atoms accounting**: returns the
+    updated ledger plus the computed `spendAtoms` that the spec
+    requires be reflected in the vault total `V`. -/
+def consumeWithSpendAtoms (l : InsuranceLedger) (amount : Nat) :
+    Option (InsuranceLedger × Nat) :=
+  match l.consume amount with
+  | none => none
+  | some l' => some (l', spendAtomsFor amount)
+
+/-- **§14 #20 (spend-atoms ≥ amount)**: per `BoundArith.amountFromBoundNum_rounds_up`,
+    `spendAtomsFor amount * BOUND_SCALE ≥ amount`. The conservative
+    rounding ensures vault-atom withdrawal covers the BOUND-unit
+    reservation. -/
+theorem spendAtomsFor_covers_amount (amount : Nat) :
+    amount ≤ spendAtomsFor amount * BOUND_SCALE := by
+  unfold spendAtomsFor
+  exact amountFromBoundNum_rounds_up amount
+
+/-- **§14 #20 (consume + spend conservation)**: the explicit
+    spend-atoms form preserves the cluster 6 atomic decrement +
+    spend identity, plus exposes the spec's BOUND-unit ↔ atom
+    conversion that the prior closure collapsed. -/
+theorem consumeWithSpendAtoms_atomic
+    (l l' : InsuranceLedger) (amount spendAtoms : Nat)
+    (h : l.consumeWithSpendAtoms amount = some (l', spendAtoms)) :
+    l'.sourceCreditReservedNum + amount = l.sourceCreditReservedNum
+    ∧ l'.domainSpent = l.domainSpent + amount
+    ∧ spendAtoms = spendAtomsFor amount := by
+  unfold consumeWithSpendAtoms at h
+  have hboth : l.consume amount = some l' ∧ spendAtoms = spendAtomsFor amount := by
+    cases hc : l.consume amount with
+    | none => rw [hc] at h; cases h
+    | some lc =>
+      rw [hc] at h
+      have hpair : (lc, spendAtomsFor amount) = (l', spendAtoms) := Option.some.inj h
+      have hl : lc = l' := (Prod.mk.injEq _ _ _ _).mp hpair |>.1
+      have hs : spendAtomsFor amount = spendAtoms := (Prod.mk.injEq _ _ _ _).mp hpair |>.2
+      exact ⟨congrArg some hl, hs.symm⟩
+  obtain ⟨hcons, hspend⟩ := hboth
+  have hca := InsuranceLedger.consume_atomic_decrement_and_spend l l' amount hcons
+  exact ⟨hca.1, hca.2, hspend⟩
+
+/-- **§14 #20 (spend-atoms is the vault-decrement quantum)**: the
+    returned `spendAtoms` is what the spec calls
+    `amount_from_bound_num_up(amount)` — the *exact* vault-atom
+    withdrawal corresponding to the BOUND-unit reservation
+    consumption. -/
+theorem consumeWithSpendAtoms_spend_correct
+    (l l' : InsuranceLedger) (amount spendAtoms : Nat)
+    (h : l.consumeWithSpendAtoms amount = some (l', spendAtoms)) :
+    amount ≤ spendAtoms * BOUND_SCALE := by
+  have := (consumeWithSpendAtoms_atomic l l' amount spendAtoms h).2.2
+  rw [this]
+  exact spendAtomsFor_covers_amount amount
 
 end InsuranceLedger
 

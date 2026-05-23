@@ -145,4 +145,101 @@ theorem double_counted_strict_increase
 
 end HealthInputs
 
+-- ============================================================================
+-- §14 #90: PenaltySource enum with category tags (equity vs requirement)
+-- ============================================================================
+
+/-- The classification of a penalty: does it deduct from equity or
+    add to the maintenance requirement? Per spec these are disjoint
+    sides of the health test. -/
+inductive PenaltyCategory : Type where
+  | equity      : PenaltyCategory
+  | requirement : PenaltyCategory
+  deriving DecidableEq, Repr
+
+/-- A specific penalty source. Each source maps to exactly one
+    `PenaltyCategory` and one `HealthInputs` field — the disjointness
+    is established by definition. -/
+inductive PenaltySource : Type where
+  | lossExposure              : PenaltySource
+  | lockedFaceClaim           : PenaltySource
+  | pendingObligationExposure : PenaltySource
+  | maintenanceRequirement    : PenaltySource
+  deriving DecidableEq, Repr
+
+namespace PenaltySource
+
+/-- The category each source belongs to. -/
+def category : PenaltySource → PenaltyCategory
+  | .lossExposure              => .equity
+  | .lockedFaceClaim           => .equity
+  | .pendingObligationExposure => .equity
+  | .maintenanceRequirement    => .requirement
+
+/-- The contribution of each source to the health inputs. -/
+def contributionOf (h : HealthInputs) : PenaltySource → Nat
+  | .lossExposure              => h.lossExposure
+  | .lockedFaceClaim           => h.lockedFaceClaim
+  | .pendingObligationExposure => h.pendingObligationExposure
+  | .maintenanceRequirement    => h.maintenanceRequirement
+
+end PenaltySource
+
+/-- The sum of contributions across a list of sources. -/
+def HealthInputs.sumContributions
+    (h : HealthInputs) (sources : List PenaltySource) : Nat :=
+  (sources.map (PenaltySource.contributionOf h)).sum
+
+/-- **§14 #90 (each source has exactly one category)**: the category
+    function is total and deterministic — no source spans both equity
+    and requirement sides. -/
+theorem PenaltySource.category_total (s : PenaltySource) :
+    s.category = .equity ∨ s.category = .requirement := by
+  cases s
+  all_goals (first | exact .inl rfl | exact .inr rfl)
+
+/-- **§14 #90 (no source has both categories)**: the category function
+    is a function (not a relation), so no source can simultaneously
+    be equity and requirement. -/
+theorem PenaltySource.category_unique
+    (s : PenaltySource) (c1 c2 : PenaltyCategory)
+    (h1 : s.category = c1) (h2 : s.category = c2) :
+    c1 = c2 := by
+  rw [← h1, ← h2]
+
+/-- **§14 #90 (sum decomposition by category)**: the negative-equity
+    formula equals the sum over the three equity-category sources
+    plus the maintenance-requirement source. Each source contributes
+    via `contributionOf` exactly once. -/
+theorem HealthInputs.negativeEquity_eq_sum_by_category (h : HealthInputs) :
+    h.negativeEquity
+    = h.sumContributions [.lossExposure, .lockedFaceClaim, .pendingObligationExposure]
+      + h.sumContributions [.maintenanceRequirement] := by
+  unfold negativeEquity sumContributions
+  simp [PenaltySource.contributionOf]
+  omega
+
+/-- **§14 #90 (equity-side sources have equity category)**: the three
+    sources in the equity decomposition all map to `.equity`. -/
+theorem PenaltySource.equity_sources_have_equity_category :
+    PenaltySource.lossExposure.category = .equity
+    ∧ PenaltySource.lockedFaceClaim.category = .equity
+    ∧ PenaltySource.pendingObligationExposure.category = .equity := by
+  refine ⟨rfl, rfl, rfl⟩
+
+/-- **§14 #90 (requirement-side source has requirement category)**: the
+    sole requirement-side source maps to `.requirement`. -/
+theorem PenaltySource.requirement_source_has_requirement_category :
+    PenaltySource.maintenanceRequirement.category = .requirement := rfl
+
+/-- **§14 #90 (disjointness via category mismatch)**: an equity-side
+    source's category is provably not equal to a requirement-side
+    source's category. -/
+theorem PenaltySource.equity_distinct_from_requirement
+    (s : PenaltySource) (h : s.category = .equity) :
+    s.category ≠ .requirement := by
+  rw [h]
+  intro contra
+  cases contra
+
 end Percolator.Spec

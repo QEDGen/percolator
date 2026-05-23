@@ -18,6 +18,7 @@
 -/
 
 import Percolator.Defs
+import Percolator.StockReconciliation
 import Mathlib.Tactic.Linarith
 
 namespace Percolator.Spec
@@ -167,6 +168,72 @@ theorem consumeBacking_fails_when_underbacked
     s.consumeBacking amount = none := by
   unfold consumeBacking
   simp [h]
+
+-- ============================================================================
+-- §14 #55: VaultSnapshot embeds into 10-class StockClasses
+-- ============================================================================
+
+/-- Embed a `VaultSnapshot` into a 10-class `StockClasses` partition.
+
+    `loserCapital` and `winnerCapital` fold into `cTot` (the per-
+    account capital aggregate). `bookedLoss` lands in
+    `settlementRoundingResidue` (protocol-owned residue from the
+    booking — the spec-aligned target for unallocated loss). The
+    other eight classes are zero in the simplified vault snapshot. -/
+def embed (s : VaultSnapshot) : StockClasses where
+  cTot                       := s.loserCapital + s.winnerCapital
+  insurance                  := 0
+  cancelDepositEscrow        := 0
+  pendingObligationEscrow    := 0
+  closeStagedQuoteReserve    := 0
+  resolvedPayoutEscrow       := 0
+  explicitBackedLossReserve  := 0
+  settlementRoundingResidue  := s.bookedLoss
+  protocolFeePayable         := 0
+  unallocatedProtocolSurplus := 0
+
+/-- **§14 #55 (embed preserves senior invariant in 10-class form)**:
+    when the source snapshot satisfies the 3-class senior invariant
+    `vault = loserCapital + winnerCapital + bookedLoss`, the embedded
+    `StockClasses` satisfies the 10-class reconciliation
+    `vault = totalV`. -/
+theorem embed_totalV_eq_vault (s : VaultSnapshot) (h : s.seniorInvariant) :
+    s.embed.totalV = s.vault := by
+  unfold seniorInvariant at h
+  unfold embed StockClasses.totalV
+  simp
+  omega
+
+/-- **§14 #55 (embed preserves reconciliation)**: if the snapshot's
+    senior invariant holds, the embedded stock classes reconcile to
+    the snapshot's vault — `StockClasses.reconciled` is satisfied. -/
+theorem embed_reconciled (s : VaultSnapshot) (h : s.seniorInvariant) :
+    s.embed.reconciled s.vault := by
+  unfold StockClasses.reconciled
+  exact (embed_totalV_eq_vault s h).symm
+
+/-- **§14 #55 (consumeBacking lifts to embedded form)**: a
+    backing-consumption transition preserves the embedded
+    StockClasses's reconciliation. Combining
+    `consumeBacking_preserves_seniorInvariant` (the 3-class proof)
+    with `embed_reconciled` gives the 10-class statement. -/
+theorem consumeBacking_embed_preserves_reconciled
+    (s s' : VaultSnapshot) (amount : Nat)
+    (hpre : s.seniorInvariant) (h : s.consumeBacking amount = some s') :
+    s'.embed.reconciled s'.vault :=
+  embed_reconciled s' (consumeBacking_preserves_seniorInvariant s s' amount hpre h)
+
+/-- **§14 #55 (consumeBacking preserves vault in 10-class form)**:
+    the embedded vault total is unchanged across the transition. -/
+theorem consumeBacking_embed_preserves_totalV
+    (s s' : VaultSnapshot) (amount : Nat)
+    (hpre : s.seniorInvariant) (h : s.consumeBacking amount = some s') :
+    s'.embed.totalV = s.embed.totalV := by
+  have hvpre := embed_totalV_eq_vault s hpre
+  have hvpost := embed_totalV_eq_vault s'
+    (consumeBacking_preserves_seniorInvariant s s' amount hpre h)
+  have hvault := consumeBacking_preserves_vault s s' amount h
+  omega
 
 end VaultSnapshot
 

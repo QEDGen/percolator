@@ -226,6 +226,138 @@ theorem resolution_is_one_of_three
     | liquidation => exact .inr (.inr (.inl rfl))
     | recovery => exact .inr (.inr (.inr rfl))
 
+-- ============================================================================
+-- §14 #10: progress monoid forces routing under impairment
+-- ============================================================================
+
+/-- The progress monoid: an account plus a non-decreasing counter
+    tracking how many resolution steps have been taken. Routes
+    strictly advance the counter; `normalStep` is the identity on
+    it. This is the structural witness for "forces routing": any
+    progress from an impaired-unresolved state must come from one
+    of the three named routes. -/
+structure WithProgress where
+  account  : AccountWithLiens
+  progress : Nat
+  deriving Repr
+
+namespace WithProgress
+
+/-- A fresh state at zero progress. -/
+def fresh : WithProgress where
+  account  := AccountWithLiens.fresh
+  progress := 0
+
+/-- Lift `normalStep` to the progress-pair: identity on the counter. -/
+def normalStep (wp : WithProgress) : Option WithProgress :=
+  match wp.account.normalStep with
+  | none   => none
+  | some a => some { account := a, progress := wp.progress }
+
+/-- Lift `routeDeleverage`: strictly advances the counter by 1. -/
+def routeDeleverage (wp : WithProgress) : Option WithProgress :=
+  match wp.account.routeDeleverage with
+  | none   => none
+  | some a => some { account := a, progress := wp.progress + 1 }
+
+/-- Lift `routeLiquidation`: strictly advances the counter by 1. -/
+def routeLiquidation (wp : WithProgress) : Option WithProgress :=
+  match wp.account.routeLiquidation with
+  | none   => none
+  | some a => some { account := a, progress := wp.progress + 1 }
+
+/-- Lift `routeRecovery`: strictly advances the counter by 1. -/
+def routeRecovery (wp : WithProgress) : Option WithProgress :=
+  match wp.account.routeRecovery with
+  | none   => none
+  | some a => some { account := a, progress := wp.progress + 1 }
+
+/-- **§14 #10 (normal step is identity on progress)**: a successful
+    `normalStep` leaves the progress counter unchanged. -/
+theorem normalStep_progress_unchanged
+    (wp wp' : WithProgress) (h : wp.normalStep = some wp') :
+    wp'.progress = wp.progress := by
+  unfold normalStep at h
+  cases hns : wp.account.normalStep with
+  | none => rw [hns] at h; cases h
+  | some a =>
+    rw [hns] at h
+    injection h with heq
+    subst heq
+    rfl
+
+/-- **§14 #10 (deleverage route strictly advances progress)**. -/
+theorem routeDeleverage_progress_advances
+    (wp wp' : WithProgress) (h : wp.routeDeleverage = some wp') :
+    wp'.progress = wp.progress + 1 := by
+  unfold routeDeleverage at h
+  cases hns : wp.account.routeDeleverage with
+  | none => rw [hns] at h; cases h
+  | some a =>
+    rw [hns] at h
+    injection h with heq
+    subst heq
+    rfl
+
+/-- **§14 #10 (liquidation route strictly advances progress)**. -/
+theorem routeLiquidation_progress_advances
+    (wp wp' : WithProgress) (h : wp.routeLiquidation = some wp') :
+    wp'.progress = wp.progress + 1 := by
+  unfold routeLiquidation at h
+  cases hns : wp.account.routeLiquidation with
+  | none => rw [hns] at h; cases h
+  | some a =>
+    rw [hns] at h
+    injection h with heq
+    subst heq
+    rfl
+
+/-- **§14 #10 (recovery route strictly advances progress)**. -/
+theorem routeRecovery_progress_advances
+    (wp wp' : WithProgress) (h : wp.routeRecovery = some wp') :
+    wp'.progress = wp.progress + 1 := by
+  unfold routeRecovery at h
+  cases hns : wp.account.routeRecovery with
+  | none => rw [hns] at h; cases h
+  | some a =>
+    rw [hns] at h
+    injection h with heq
+    subst heq
+    rfl
+
+/-- **§14 #10 (normal step blocked under impairment, lifted)**. -/
+theorem normalStep_blocked_under_impairment
+    (wp : WithProgress) (himp : wp.account.hasImpairedLien = true)
+    (hres : wp.account.resolved = false) :
+    wp.normalStep = none := by
+  unfold normalStep
+  rw [normalStep_blocked_when_impaired wp.account himp hres]
+
+/-- **§14 #10 (closed-world: under impairment, only routes can
+    produce strict progress)**. From an impaired-unresolved state,
+    if any of the four candidate transitions takes us to a state
+    with strictly greater progress, then the transition was one of
+    the three routes — `normalStep` cannot have fired, because it
+    is blocked under impairment. -/
+theorem strict_progress_from_impairment_implies_route
+    (wp wp' : WithProgress)
+    (himp : wp.account.hasImpairedLien = true)
+    (hres : wp.account.resolved = false)
+    (h : wp.normalStep = some wp' ∨
+         wp.routeDeleverage = some wp' ∨
+         wp.routeLiquidation = some wp' ∨
+         wp.routeRecovery = some wp') :
+    wp.routeDeleverage = some wp' ∨
+    wp.routeLiquidation = some wp' ∨
+    wp.routeRecovery = some wp' := by
+  rcases h with hns | hrest
+  · have hblock := normalStep_blocked_under_impairment wp himp hres
+    rw [hblock] at hns
+    cases hns
+  · exact hrest
+
+end WithProgress
+
 end AccountWithLiens
 
 end Percolator.Spec

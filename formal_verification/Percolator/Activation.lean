@@ -206,6 +206,10 @@ structure ActivationEnvelope where
   recoveryFallbackOK : Bool
   deriving Repr
 
+/-- The configured maximum portfolio width N. Mirrors
+    `v16.rs::V16_MAX_PORTFOLIO_ASSETS_N` (value 16 in the Rust impl). -/
+def MAX_PORTFOLIO_ASSETS_N : Nat := 16
+
 namespace ActivationEnvelope
 
 /-- All envelope checks passed. -/
@@ -223,6 +227,31 @@ theorem allValid_iff (e : ActivationEnvelope) :
   unfold allValid
   simp [Bool.and_eq_true]
   tauto
+
+/-- Derive the `portfolioOK` envelope flag from a candidate `N` value.
+    Returns `true` iff `N ≤ MAX_PORTFOLIO_ASSETS_N`. -/
+def portfolioOKFromN (n : Nat) : Bool :=
+  decide (n ≤ MAX_PORTFOLIO_ASSETS_N)
+
+/-- **§14 #88 (N too large → portfolio envelope fails)**: when the
+    candidate `N` exceeds the bound, the derived envelope flag is
+    `false`. Composed with `Activate.rejects_when_portfolio_envelope_fails`,
+    this proves that public initialization or activation rejects
+    out-of-bound `N`. -/
+theorem portfolioOKFromN_false_when_too_large
+    (n : Nat) (h : MAX_PORTFOLIO_ASSETS_N < n) :
+    portfolioOKFromN n = false := by
+  unfold portfolioOKFromN
+  have : ¬ n ≤ MAX_PORTFOLIO_ASSETS_N := by omega
+  simp [this]
+
+/-- **§14 #88 (N in bounds → portfolio envelope OK)**: dual to the
+    above. Within bounds, the flag is `true`. -/
+theorem portfolioOKFromN_true_when_in_bounds
+    (n : Nat) (h : n ≤ MAX_PORTFOLIO_ASSETS_N) :
+    portfolioOKFromN n = true := by
+  unfold portfolioOKFromN
+  simp [h]
 
 end ActivationEnvelope
 
@@ -399,6 +428,33 @@ theorem produces_active
     lAfter = .Active := by
   cases h; rfl
 
+/-- **§14 #88**: `Activate` requires every `ActivationEnvelope` check
+    to have passed (`requires_full_envelope`), including the
+    `portfolioOK` envelope. A configuration with `N` exceeding the
+    portfolio bound fails this check; the constructor refuses to
+    fire. -/
+theorem rejects_when_portfolio_envelope_fails
+    {s s' : AssetSlotState} {lBefore lAfter : AssetLifecycle}
+    {env : ActivationEnvelope}
+    (henv : env.portfolioOK = false)
+    (h : Activate s lBefore env s' lAfter) : False := by
+  have hall := Activate.requires_full_envelope h
+  rw [ActivationEnvelope.allValid_iff] at hall
+  exact absurd hall.2.2.2.2.2.2.2.2.1 (by rw [henv]; intro contra; exact Bool.false_ne_true contra)
+
+/-- **§14 #88 (composition)**: with `portfolioOK` derived from `N`,
+    Activate is impossible when N is too large. -/
+theorem rejects_when_N_too_large
+    {s s' : AssetSlotState} {lBefore lAfter : AssetLifecycle}
+    {env : ActivationEnvelope}
+    (n : Nat) (hn : MAX_PORTFOLIO_ASSETS_N < n)
+    (hflag : env.portfolioOK = ActivationEnvelope.portfolioOKFromN n)
+    (h : Activate s lBefore env s' lAfter) : False := by
+  have hf : env.portfolioOK = false := by
+    rw [hflag]
+    exact ActivationEnvelope.portfolioOKFromN_false_when_too_large n hn
+  exact rejects_when_portfolio_envelope_fails hf h
+
 end Activate
 
 -- ============================================================================
@@ -453,5 +509,303 @@ theorem activation_postCert_implies_bumped_epoch
   rw [HealthCert.validIn_iff] at hafter
   have he := Activate.bumps_epoch h
   omega
+
+-- ============================================================================
+-- §14 #59: per-envelope concrete predicates from numerical witnesses
+-- ============================================================================
+
+namespace ActivationEnvelope
+
+/-- Concrete numerical witnesses underlying each envelope check.
+    Each pair (actual, threshold) corresponds to one Bool flag on
+    `ActivationEnvelope`. -/
+structure Witness where
+  feePaid                       : Nat
+  feeRequired                   : Nat
+  priceAgeBlocks                : Nat
+  priceMaxAgeBlocks             : Nat
+  fundingAccrued                : Nat
+  fundingDue                    : Nat
+  marginActual                  : Nat
+  marginRequired                : Nat
+  oiActual                      : Nat
+  oiCap                         : Nat
+  bHeadroomActual               : Nat
+  bHeadroomRequired             : Nat
+  sourceCreditUsed              : Nat
+  sourceCreditCap               : Nat
+  closeProgressDone             : Nat
+  closeProgressTarget           : Nat
+  portfolioWidthN               : Nat
+  recoveryFallbackBackoffBlocks : Nat
+  recoveryFallbackBackoffMin    : Nat
+  deriving Repr
+
+/-- Derive a complete `ActivationEnvelope` from a numerical witness.
+    Each flag is `true` exactly when its underlying inequality holds.
+    `portfolioOK` is delegated to `portfolioOKFromN` from the #88
+    strengthening to keep the two derivations in lock-step. -/
+def fromWitness (w : Witness) : ActivationEnvelope where
+  feeOK              := decide (w.feeRequired ≤ w.feePaid)
+  priceOK            := decide (w.priceAgeBlocks ≤ w.priceMaxAgeBlocks)
+  fundingOK          := decide (w.fundingDue ≤ w.fundingAccrued)
+  marginOK           := decide (w.marginRequired ≤ w.marginActual)
+  oiOK               := decide (w.oiActual ≤ w.oiCap)
+  bHeadroomOK        := decide (w.bHeadroomRequired ≤ w.bHeadroomActual)
+  sourceCreditOK     := decide (w.sourceCreditUsed ≤ w.sourceCreditCap)
+  closeProgressOK    := decide (w.closeProgressTarget ≤ w.closeProgressDone)
+  portfolioOK        := portfolioOKFromN w.portfolioWidthN
+  recoveryFallbackOK := decide (w.recoveryFallbackBackoffMin
+                                ≤ w.recoveryFallbackBackoffBlocks)
+
+/-- **§14 #59 (feeOK derivation)**: when the witness shows under-paid
+    fee, the derived `feeOK` flag is `false`. -/
+theorem fromWitness_feeOK_false_when_underpaid (w : Witness)
+    (h : w.feePaid < w.feeRequired) :
+    (fromWitness w).feeOK = false := by
+  unfold fromWitness
+  have hnot : ¬ w.feeRequired ≤ w.feePaid := by omega
+  simp [hnot]
+
+/-- **§14 #59 (priceOK derivation)**: stale price (age exceeds max)
+    forces `priceOK = false`. -/
+theorem fromWitness_priceOK_false_when_stale (w : Witness)
+    (h : w.priceMaxAgeBlocks < w.priceAgeBlocks) :
+    (fromWitness w).priceOK = false := by
+  unfold fromWitness
+  have hnot : ¬ w.priceAgeBlocks ≤ w.priceMaxAgeBlocks := by omega
+  simp [hnot]
+
+/-- **§14 #59 (fundingOK derivation)**: funding owed beyond accrued
+    forces `fundingOK = false`. -/
+theorem fromWitness_fundingOK_false_when_short (w : Witness)
+    (h : w.fundingAccrued < w.fundingDue) :
+    (fromWitness w).fundingOK = false := by
+  unfold fromWitness
+  have hnot : ¬ w.fundingDue ≤ w.fundingAccrued := by omega
+  simp [hnot]
+
+/-- **§14 #59 (marginOK derivation)**: under-margin forces flag false. -/
+theorem fromWitness_marginOK_false_when_undermargined (w : Witness)
+    (h : w.marginActual < w.marginRequired) :
+    (fromWitness w).marginOK = false := by
+  unfold fromWitness
+  have hnot : ¬ w.marginRequired ≤ w.marginActual := by omega
+  simp [hnot]
+
+/-- **§14 #59 (oiOK derivation)**: OI over cap forces flag false. -/
+theorem fromWitness_oiOK_false_when_over (w : Witness)
+    (h : w.oiCap < w.oiActual) :
+    (fromWitness w).oiOK = false := by
+  unfold fromWitness
+  have hnot : ¬ w.oiActual ≤ w.oiCap := by omega
+  simp [hnot]
+
+/-- **§14 #59 (bHeadroomOK derivation)**: insufficient B-headroom
+    forces flag false. -/
+theorem fromWitness_bHeadroomOK_false_when_short (w : Witness)
+    (h : w.bHeadroomActual < w.bHeadroomRequired) :
+    (fromWitness w).bHeadroomOK = false := by
+  unfold fromWitness
+  have hnot : ¬ w.bHeadroomRequired ≤ w.bHeadroomActual := by omega
+  simp [hnot]
+
+/-- **§14 #59 (sourceCreditOK derivation)**: source credit over cap
+    forces flag false. -/
+theorem fromWitness_sourceCreditOK_false_when_over (w : Witness)
+    (h : w.sourceCreditCap < w.sourceCreditUsed) :
+    (fromWitness w).sourceCreditOK = false := by
+  unfold fromWitness
+  have hnot : ¬ w.sourceCreditUsed ≤ w.sourceCreditCap := by omega
+  simp [hnot]
+
+/-- **§14 #59 (closeProgressOK derivation)**: close progress short
+    of target forces flag false. -/
+theorem fromWitness_closeProgressOK_false_when_short (w : Witness)
+    (h : w.closeProgressDone < w.closeProgressTarget) :
+    (fromWitness w).closeProgressOK = false := by
+  unfold fromWitness
+  have hnot : ¬ w.closeProgressTarget ≤ w.closeProgressDone := by omega
+  simp [hnot]
+
+/-- **§14 #59 (portfolioOK derivation)**: delegates to the #88
+    `portfolioOKFromN` link; over-bound `N` forces flag false. -/
+theorem fromWitness_portfolioOK_false_when_N_too_large (w : Witness)
+    (h : MAX_PORTFOLIO_ASSETS_N < w.portfolioWidthN) :
+    (fromWitness w).portfolioOK = false := by
+  unfold fromWitness
+  exact portfolioOKFromN_false_when_too_large w.portfolioWidthN h
+
+/-- **§14 #59 (recoveryFallbackOK derivation)**: backoff too short
+    forces flag false. -/
+theorem fromWitness_recoveryFallbackOK_false_when_short (w : Witness)
+    (h : w.recoveryFallbackBackoffBlocks < w.recoveryFallbackBackoffMin) :
+    (fromWitness w).recoveryFallbackOK = false := by
+  unfold fromWitness
+  have hnot : ¬ w.recoveryFallbackBackoffMin
+                ≤ w.recoveryFallbackBackoffBlocks := by omega
+  simp [hnot]
+
+/-- **§14 #59 (per-envelope soundness — fee side)**: if a witness-
+    derived envelope is fully valid, the witness's fee condition
+    holds. Demonstrates per-envelope decoding from `allValid`. -/
+theorem fromWitness_allValid_implies_fee_paid (w : Witness)
+    (h : (fromWitness w).allValid = true) :
+    w.feeRequired ≤ w.feePaid := by
+  have hcomp := (allValid_iff (fromWitness w)).mp h
+  have hfee := hcomp.1
+  unfold fromWitness at hfee
+  simp at hfee
+  exact hfee
+
+/-- **§14 #59 (per-envelope soundness — margin side)**. -/
+theorem fromWitness_allValid_implies_margin_satisfied (w : Witness)
+    (h : (fromWitness w).allValid = true) :
+    w.marginRequired ≤ w.marginActual := by
+  have hcomp := (allValid_iff (fromWitness w)).mp h
+  have hm := hcomp.2.2.2.1
+  unfold fromWitness at hm
+  simp at hm
+  exact hm
+
+/-- **§14 #59 (per-envelope soundness — source-credit side)**. -/
+theorem fromWitness_allValid_implies_sourceCredit_under_cap (w : Witness)
+    (h : (fromWitness w).allValid = true) :
+    w.sourceCreditUsed ≤ w.sourceCreditCap := by
+  have hcomp := (allValid_iff (fromWitness w)).mp h
+  have hsc := hcomp.2.2.2.2.2.2.1
+  unfold fromWitness at hsc
+  simp at hsc
+  exact hsc
+
+/-- **§14 #59 (per-envelope soundness — recovery fallback side)**. -/
+theorem fromWitness_allValid_implies_recoveryFallback_sufficient
+    (w : Witness) (h : (fromWitness w).allValid = true) :
+    w.recoveryFallbackBackoffMin ≤ w.recoveryFallbackBackoffBlocks := by
+  have hcomp := (allValid_iff (fromWitness w)).mp h
+  have hr := hcomp.2.2.2.2.2.2.2.2.2
+  unfold fromWitness at hr
+  simp at hr
+  exact hr
+
+end ActivationEnvelope
+
+-- ============================================================================
+-- §14 #60: reconciliation flag separate from zero counts
+-- ============================================================================
+
+namespace AssetSlotState
+
+/-- A reconciliation flag, separate from the quantitative slot fields.
+
+    The spec ("nonzero or unreconciled") names two *independent*
+    conditions: a slot can have all-zero counts and still be
+    unreconciled — e.g. mid-reorg, before a settlement attestation
+    is processed, or while a side-effect queue is still draining. -/
+structure Reconciliation where
+  reconciled : Bool
+  deriving Repr, DecidableEq
+
+/-- A slot paired with its reconciliation flag. This is the unit
+    of the strengthened activation transition. -/
+structure Reconciled where
+  slot           : AssetSlotState
+  reconciliation : Reconciliation
+  deriving Repr
+
+namespace Reconciled
+
+/-- Full reconciliation: zero counts AND the reconciliation flag set. -/
+def fullyReconciled (r : Reconciled) : Prop :=
+  r.slot.isReconciledZero ∧ r.reconciliation.reconciled = true
+
+instance (r : Reconciled) : Decidable r.fullyReconciled := by
+  unfold fullyReconciled; infer_instance
+
+/-- An unreconciled-but-zero state: counts are zero but the flag
+    is `false`. Demonstrates the distinction the audit asked for. -/
+def unreconciledZero (epoch : Nat) : Reconciled where
+  slot := AssetSlotState.empty epoch
+  reconciliation := { reconciled := false }
+
+/-- A fully-reconciled empty state. -/
+def reconciledEmpty (epoch : Nat) : Reconciled where
+  slot := AssetSlotState.empty epoch
+  reconciliation := { reconciled := true }
+
+/-- **§14 #60 (unreconciled-zero is structurally distinct)**: a slot
+    with zero counts but `reconciled = false` does NOT satisfy
+    `fullyReconciled`. The predicate distinguishes the two states. -/
+theorem unreconciledZero_not_fullyReconciled (epoch : Nat) :
+    ¬ (unreconciledZero epoch).fullyReconciled := by
+  unfold unreconciledZero fullyReconciled
+  intro ⟨_, h⟩
+  cases h
+
+/-- **§14 #60 (reconciled-zero is accepted)**: the fully-reconciled
+    empty state satisfies the predicate — completing the picture
+    that the two conditions are *separately* checked. -/
+theorem reconciledEmpty_fullyReconciled (epoch : Nat) :
+    (reconciledEmpty epoch).fullyReconciled := by
+  unfold reconciledEmpty fullyReconciled
+  refine ⟨AssetSlotState.empty_isReconciledZero epoch, rfl⟩
+
+end Reconciled
+
+end AssetSlotState
+
+/-- The strengthened activation transition over the paired
+    reconciled state. Requires a valid lifecycle step, full
+    reconciliation (zero counts AND flag set), and every envelope
+    check. Post-state bumps the slot epoch by 1 (§14 #61). -/
+inductive ActivateFull :
+    AssetSlotState.Reconciled → AssetLifecycle → ActivationEnvelope →
+    AssetSlotState.Reconciled → AssetLifecycle → Prop where
+  | step (r : AssetSlotState.Reconciled) (lBefore : AssetLifecycle)
+         (env : ActivationEnvelope)
+         (_hlife : AssetLifecycle.Step lBefore .Active)
+         (_hrec : r.fullyReconciled)
+         (_henv : env.allValid = true) :
+      ActivateFull r lBefore env
+        { r with slot := { r.slot with epoch := r.slot.epoch + 1 } }
+        .Active
+
+namespace ActivateFull
+
+/-- **§14 #60 (strengthened — requires reconciliation flag)**:
+    a successful `ActivateFull` proves the reconciliation flag was
+    set, separately from the zero counts. -/
+theorem requires_reconciliation_flag
+    {r r' : AssetSlotState.Reconciled} {lBefore lAfter : AssetLifecycle}
+    {env : ActivationEnvelope}
+    (h : ActivateFull r lBefore env r' lAfter) :
+    r.reconciliation.reconciled = true := by
+  cases h with
+  | step _ hrec _ => exact hrec.2
+
+/-- **§14 #60 (strengthened — also requires zero counts)**: the
+    quantitative side of the precondition. Conjoined with the flag
+    requirement above. -/
+theorem requires_zero_state
+    {r r' : AssetSlotState.Reconciled} {lBefore lAfter : AssetLifecycle}
+    {env : ActivationEnvelope}
+    (h : ActivateFull r lBefore env r' lAfter) :
+    r.slot.isReconciledZero := by
+  cases h with
+  | step _ hrec _ => exact hrec.1
+
+/-- **§14 #60 (counterfactual: zero counts alone are insufficient)**:
+    the `unreconciledZero` state (zero counts, `reconciled = false`)
+    cannot be the pre-state of any `ActivateFull` transition. -/
+theorem unreconciled_zero_rejects_activation
+    {lBefore lAfter : AssetLifecycle} {env : ActivationEnvelope}
+    {r' : AssetSlotState.Reconciled} (epoch : Nat)
+    (h : ActivateFull (AssetSlotState.Reconciled.unreconciledZero epoch)
+         lBefore env r' lAfter) : False := by
+  have hflag := requires_reconciliation_flag h
+  unfold AssetSlotState.Reconciled.unreconciledZero at hflag
+  cases hflag
+
+end ActivateFull
 
 end Percolator.Spec

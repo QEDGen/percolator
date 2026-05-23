@@ -1,7 +1,6 @@
 #![allow(dead_code)] // reference port mirrors every Lean def; not all are exercised by proptests yet
 
-//! State-machine refinement: `Percolator/Activation.lean` (+
-//! `YetMoreStrengthening.lean`, `MoreStrengthening.lean`) ↔ Rust.
+//! State-machine refinement: `Percolator/Activation.lean` ↔ Rust.
 //!
 //! Tier 2 of the verification stack, fourth cluster bridge. Covers:
 //!
@@ -29,9 +28,10 @@
 //!     #88 strengthening): activation is impossible when the
 //!     candidate N exceeds the bound.
 //!
-//! See `formal_verification/Percolator/Activation.lean`,
-//! `MoreStrengthening.lean::ActivationEnvelope.portfolioOKFromN`,
-//! `YetMoreStrengthening.lean::ActivationEnvelope.fromWitness`.
+//! See `formal_verification/Percolator/Activation.lean`
+//! (including `ActivationEnvelope.portfolioOKFromN`,
+//! `Activate.rejects_when_N_too_large`, and
+//! `ActivationEnvelope.fromWitness`).
 
 use proptest::prelude::*;
 
@@ -93,7 +93,7 @@ impl ActivationEnvelope {
 }
 
 /// Maximum portfolio width N. Lean
-/// `MoreStrengthening.lean::MAX_PORTFOLIO_ASSETS_N`.
+/// `Activation.lean::MAX_PORTFOLIO_ASSETS_N`.
 const MAX_PORTFOLIO_ASSETS_N: u32 = 16;
 
 /// `portfolio_ok` derived from candidate N. Lean
@@ -103,7 +103,7 @@ fn portfolio_ok_from_n(n: u32) -> bool {
 }
 
 /// Concrete numerical inputs for each envelope check. Lean
-/// `YetMoreStrengthening.lean::ActivationEnvelope.Witness`.
+/// `Activation.lean::ActivationEnvelope.Witness`.
 #[derive(Clone, Copy, Debug)]
 struct EnvelopeWitness {
     fee_paid: u128,

@@ -292,6 +292,30 @@ theorem lienAgainst_decreases_sumAvailable
   rw [sumAvailable_cons, sumAvailable_cons, hsub]
   omega
 
+/-- **§14 #38 (consumeLien decrements validLiened, credits consumedLiened)**:
+    a successful `BackingBucket.consumeLien` strictly decreases the
+    `validLiened` partition by `amount` and moves it into
+    `consumedLiened`. Combined with `lienAgainst` reducing
+    `freshUnliened` at lien creation, the net effect is that the
+    spent backing is removed from the bucket's `freshUnliened +
+    validLiened` total — the "fresh-reserved" pool from the spec. -/
+theorem consumeLien_removes_from_validLiened
+    (b b' : BackingBucket) (amount : Nat)
+    (h : b.consumeLien amount = some b') :
+    b'.validLiened + amount = b.validLiened
+    ∧ b'.consumedLiened = b.consumedLiened + amount := by
+  unfold consumeLien at h
+  by_cases hlt : b.validLiened < amount
+  · simp [hlt] at h
+  · push_neg at hlt
+    simp [hlt] at h
+    have hb' := h.symm
+    refine ⟨?_, ?_⟩
+    · rw [hb']
+      change b.validLiened - amount + amount = b.validLiened
+      omega
+    · rw [hb']
+
 end BackingBucket
 
 end Percolator.Spec

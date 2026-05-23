@@ -18,6 +18,7 @@
 
 import Percolator.SoftCredit
 import Percolator.StockReconciliation
+import Percolator.ActualBacking
 import Mathlib.Tactic.Linarith
 
 namespace Percolator.Spec
@@ -200,5 +201,79 @@ theorem forgive_uncollectible_vanishes
     (applyForgiveness sc f).totalV = sc.totalV := applyForgiveness_preserves_totalV sc f
 
 end FeeResolution
+
+-- ============================================================================
+-- §14 #52: PayoutFromCredit bound to AccountCapital action
+-- ============================================================================
+
+namespace AccountCapital
+
+/-- **Attempt a payout** from a `PayoutFromCredit` decision against an
+    `AccountCapital`. The action consumes the `payoutAmount` from
+    capital — but `payoutAmount` is structurally bounded by
+    `lienBackedAmount` (per the `payoutLe` field on `PayoutFromCredit`),
+    so a soft-credit-only decision (lien-backed = 0) yields zero
+    payout. -/
+def attemptPayout (a : AccountCapital) (p : PayoutFromCredit) :
+    Option (AccountCapital × Nat) :=
+  if p.payoutAmount = 0 then none
+  else if a.amount < p.payoutAmount then none
+  else some ({ amount := a.amount - p.payoutAmount }, p.payoutAmount)
+
+/-- **§14 #52 (soft-credit-only yields no payout)**: when the
+    `PayoutFromCredit` has zero lien-backed amount, `payoutAmount` is
+    forced to zero (by `payoutLe`), and `attemptPayout` returns
+    `none` — the engine action does nothing.
+
+    This is the binding the audit asked for: the engine path
+    consumes `payoutAmount`, not `softCreditAmount`, and zero
+    lien-backed implies zero payout. -/
+theorem attemptPayout_none_when_only_soft_credit
+    (a : AccountCapital) (p : PayoutFromCredit) (h : p.lienBackedAmount = 0) :
+    a.attemptPayout p = none := by
+  unfold attemptPayout
+  have hzero : p.payoutAmount = 0 :=
+    PayoutFromCredit.soft_credit_only_yields_zero_payout p h
+  simp [hzero]
+
+/-- **§14 #52 (positive payout requires lien backing)**: a successful
+    `attemptPayout` proves `p.lienBackedAmount > 0`. The
+    contrapositive of the no-soft-credit-payout theorem. -/
+theorem attemptPayout_some_implies_lien_backed
+    (a a' : AccountCapital) (p : PayoutFromCredit) (paid : Nat)
+    (h : a.attemptPayout p = some (a', paid)) :
+    0 < p.lienBackedAmount := by
+  by_contra hnot
+  push_neg at hnot
+  have hzero : p.lienBackedAmount = 0 := Nat.le_zero.mp hnot
+  have := attemptPayout_none_when_only_soft_credit a p hzero
+  rw [this] at h
+  cases h
+
+/-- **§14 #52 (payout decrements capital by lien-backed quantum)**:
+    a successful `attemptPayout` decrements capital by exactly
+    `payoutAmount`, which is bounded by `lienBackedAmount`. Capital
+    cannot be reduced by `softCreditAmount` — only by what the lien
+    backs. -/
+theorem attemptPayout_capital_decrement
+    (a a' : AccountCapital) (p : PayoutFromCredit) (paid : Nat)
+    (h : a.attemptPayout p = some (a', paid)) :
+    a'.amount + paid = a.amount ∧ paid ≤ p.lienBackedAmount := by
+  unfold attemptPayout at h
+  by_cases hz : p.payoutAmount = 0
+  · simp [hz] at h
+  by_cases hlt : a.amount < p.payoutAmount
+  · simp [hz, hlt] at h
+  · simp [hz, hlt] at h
+    obtain ⟨ha', hpaid⟩ := h
+    push_neg at hlt
+    refine ⟨?_, ?_⟩
+    · rw [← ha', ← hpaid]
+      change a.amount - p.payoutAmount + p.payoutAmount = a.amount
+      omega
+    · rw [← hpaid]
+      exact p.payoutLe
+
+end AccountCapital
 
 end Percolator.Spec

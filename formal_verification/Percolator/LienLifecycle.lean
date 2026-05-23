@@ -22,6 +22,7 @@
 
 import Percolator.Lien
 import Percolator.Lifecycle
+import Percolator.BackingBucket
 import Mathlib.Tactic.Linarith
 import Mathlib.Tactic.Ring
 
@@ -321,5 +322,53 @@ theorem impair_preserves_backing
   rfl
 
 end Lien
+
+-- ============================================================================
+-- §14 #38: joint fresh_reserved + claim_bound drop on lien consumption
+-- ============================================================================
+
+/-- **§14 #38 (joint statement)**: a lien consumption that targets
+    both the bucket-level `validLiened` partition and the lien-level
+    `faceClaimLockedNum` simultaneously decrements both by exactly
+    the consumed amount.
+
+    The prior closure proved only the bucket side
+    (`consumeLien_removes_from_validLiened`). This strengthens by
+    pairing it with the lien-side decrement
+    (`Lien.consume_faceClaim_decrements` from cluster 1). -/
+theorem lien_consumption_removes_fresh_reserved_and_claim_bound
+    {src : BackingSource}
+    (b b' : BackingBucket) (l l' : Lien src)
+    (amount face : Nat) (effective : Nat)
+    (hbucket : b.consumeLien amount = some b')
+    (hlien   : l.consume face amount effective = some l') :
+    b'.validLiened + amount = b.validLiened
+    ∧ l'.faceClaimLockedNum + face = l.faceClaimLockedNum
+    ∧ l'.backingReservedNum + amount = l.backingReservedNum := by
+  refine ⟨?_, ?_, ?_⟩
+  · exact (BackingBucket.consumeLien_removes_from_validLiened
+            b b' amount hbucket).1
+  · exact Lien.consume_faceClaim_decrements l face amount effective l' hlien
+  · exact Lien.consume_backing_decrements l face amount effective l' hlien
+
+/-- **§14 #38 (combined fresh-reserved sum drop)**: the bucket's
+    `freshUnliened + validLiened` (the spec's "fresh_reserved_backing_num"
+    for that bucket) decreases by `amount` when a consume fires —
+    `freshUnliened` is untouched and `validLiened` drops by `amount`. -/
+theorem BackingBucket.consumeLien_decreases_fresh_reserved_total
+    (b b' : BackingBucket) (amount : Nat)
+    (h : b.consumeLien amount = some b') :
+    b'.freshUnliened + b'.validLiened + amount
+    = b.freshUnliened + b.validLiened := by
+  unfold consumeLien at h
+  by_cases hlt : b.validLiened < amount
+  · simp [hlt] at h
+  · push_neg at hlt
+    simp [hlt] at h
+    have hb' := h.symm
+    rw [hb']
+    change b.freshUnliened + (b.validLiened - amount) + amount
+         = b.freshUnliened + b.validLiened
+    omega
 
 end Percolator.Spec

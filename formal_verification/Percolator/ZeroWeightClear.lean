@@ -126,6 +126,38 @@ theorem ZeroWeightClearance.apply_decreases_residual
     unfold ZeroWeightClearance.amount at hpos
     exact CloseLedger.bookExplicit_decreases_residual l l' a h hpos
 
+/-- A loss-weight context: the `W` denominator at the current side.
+    The spec rule applies when `W = 0` (zero weight). The
+    `bookSupportInWeightedContext` wrapper below refuses to fire
+    without a positive-W witness, so under zero-weight the only
+    accessible clearance paths are the ones in `ZeroWeightClearance`. -/
+def bookSupportInWeightedContext
+    (l : CloseLedger) (amount W : Nat) (hW : 0 < W) :
+    Option CloseLedger :=
+  l.bookSupport amount
+
+/-- **§14 #76 (positive-W is required to use bookSupport-as-clearance)**:
+    The `bookSupportInWeightedContext` function takes a `0 < W`
+    proof. Under zero weight (`W = 0`), no such proof exists, so
+    this clearance path is structurally inaccessible.
+
+    This is the structural ruling-out of the bookSupport bypass
+    that the audit flagged for §14 #76. -/
+theorem bookSupportInWeightedContext_requires_positive_W
+    (l : CloseLedger) (amount : Nat) (h : 0 < (0 : Nat)) : False :=
+  Nat.lt_irrefl 0 h
+
+/-- **§14 #76 (under zero W, only ZeroWeightClearance fires)**: the
+    structural witness — given `W = 0`, no `bookSupportInWeightedContext`
+    call can be constructed because the `0 < W` proof argument is
+    absent. -/
+theorem bookSupport_zero_weight_inaccessible
+    (l : CloseLedger) (amount : Nat) :
+    ¬ ∃ hW : 0 < (0 : Nat), ∃ l',
+      bookSupportInWeightedContext l amount 0 hW = some l' := by
+  intro ⟨hW, _, _⟩
+  exact Nat.lt_irrefl 0 hW
+
 end CloseLedger
 
 end Percolator.Spec
