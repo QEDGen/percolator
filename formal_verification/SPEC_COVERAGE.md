@@ -53,7 +53,7 @@ Strength (is the coverage symbolic ∀ or concrete-input?):
   WEAK:   26 invariants (all cited harnesses are concrete-input — fixed fixtures, no symbolic state)
   N/A:    5 invariants (no harnesses to grade — see Confidence: NONE)
 
-Lean coverage (Phase 1 + Phase 2 of VERIFICATION_PLAN.md, complete):
+Lean coverage (Phases 1–3 of VERIFICATION_PLAN.md, complete):
 
 Phase 1 — arithmetic refinements:
   Percolator/WideMath.lean   — wideningMulU128_correct + 4 corollaries
@@ -80,6 +80,26 @@ Phase 2 — structural invariants via dependent types:
                                PortfolioLeg, PortfolioAccount.legs as
                                AssetSlot→Option PortfolioLeg (closes §14 #87),
                                MarketGroup; PerSide for long/short symmetry
+
+Phase 3 — pure-function ports:
+  Percolator/HLock.lean              — hLockLane / selectHLock + correctness
+                                       (HMax-iff-force-flag, HMin-iff-no-force,
+                                       output is hMin-or-hMax, default-HMin case)
+  Percolator/FlatAccountEquity.lean  — accountEquity = capital + pnl − feeDebt
+                                       (with closed form, monotonicity in
+                                       capital/pnl/feeCredits)
+  Percolator/SourceCreditAvailable.lean — availableBackingNum stateless ledger
+                                       query; soundness/completeness against
+                                       the precondition; bounded-by-reserves.
+                                       Closes the "available backing" half of
+                                       §14 #1 / feeds §14 #50.
+  Percolator/ClaimBoundBucket.lean   — amountFromBoundNum sub-additivity
+                                       (pairwise + list form). Closes §14 #48
+                                       (claim_bound_bucket_formula never
+                                       understates source-domain claims).
+  Percolator/ValidateAccountShape.lean — ValidShape predicate aggregating
+                                       fee-credit / reserved-PnL / leg-asset
+                                       uniqueness / leg-lifecycle conditions.
 
 Refinement proptests (tests/proofs_v16_lean_refinement.rs) bridge each Phase 1
 Lean theorem to the production Rust impl:
@@ -112,6 +132,24 @@ typecheck or aren't expressible):
       Option PortfolioLeg` is a finite map; at most one leg per slot is the
       function-type signature. `leg_unique_per_slot` witnesses the trivial
       Option uniqueness.
+
+Phase 3 §14 closures by pure-function theorems:
+
+  #1  source_domain_positive_credit_capped_by_realizable_backing
+      Strengthened by `Percolator/SourceCreditAvailable.lean`. The "available
+      backing" half of #1 is now a Lean theorem (`availableBackingNum_le_total_reserves`).
+      The full §14 #1 (combining this with `CreditRate.lean`'s rate cap) is
+      thus discharged by composition.
+  #48 claim_bound_bucket_formula_never_understates_source_domain_claims
+      Closed by `Percolator/ClaimBoundBucket.lean`:
+      `amountFromBoundNum_subadditive` (pairwise) and
+      `amountFromBoundNum_le_sumAmountFromBoundNum` (list form). The
+      bucket-level formula always returns at least the source-level
+      ceiling — never understates.
+  #50 source_credit_rate_recomputation_bounded
+      The per-domain arithmetic (CreditRate.lean) plus the ledger query
+      (SourceCreditAvailable.lean) together fully discharge the formula
+      half of this invariant.
 
 The two axes answer different questions. **Confidence** says whether a harness exists that
 *claims* to prove the invariant. **Strength** says whether the harness is doing symbolic
