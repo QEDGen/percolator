@@ -293,3 +293,96 @@ proptest! {
         );
     }
 }
+
+// ============================================================================
+// Multi-step sequencing — Week 2 deepening (deferred until Week 3+)
+//
+// Production embeds the B-booking arithmetic inline inside
+// `book_bankruptcy_residual_chunk_internal` — there's no
+// standalone callable function and the engine path needs a
+// bankrupt-close fixture. The Week-3 closure uses the *inline
+// formula* directly (it's just three lines of arithmetic per step,
+// extracted to a helper here) and chains it across long sequences.
+// The reference port's `b_booking_rec` is the multi-step reference;
+// the lockstep harness diffs them step by step.
+// ============================================================================
+
+/// Production-side inline B-booking formula (mirrors v16.rs:6455-6460
+/// inside `book_bankruptcy_residual_chunk_internal`).
+fn production_inline_step(chunk: u128, r: u128, w: u128) -> (u128, u128) {
+    let numerator = chunk * PROD_SOCIAL_LOSS_DEN + r;
+    (numerator / w, numerator % w)
+}
+
+proptest! {
+    /// **Multi-step lockstep: the reference port's `b_booking_step`
+    /// agrees with the inline production formula at every step of a
+    /// 30-chunk sequence**. The cumulative `delta_B` and final
+    /// remainder must match between reference (via `b_booking_rec`)
+    /// and the production formula chained explicitly.
+    #[test]
+    fn multistep_production_formula_matches_reference(
+        chunks in prop::collection::vec(0u128..=1_000u128, 1..30),
+        w in 1u128..=SOCIAL_LOSS_DEN,
+        r0 in 0u128..=SOCIAL_LOSS_DEN,
+    ) {
+        // Reference: invoke the multi-chunk recursion.
+        let (ref_delta_total, ref_final_r) = b_booking_rec(&chunks, r0, w);
+
+        // Production: chain the inline formula explicitly.
+        let mut prod_delta_total: u128 = 0;
+        let mut prod_r = r0;
+        for &c in &chunks {
+            let (delta, r_new) = production_inline_step(c, prod_r, w);
+            prod_delta_total += delta;
+            prod_r = r_new;
+        }
+
+        prop_assert_eq!(prod_delta_total, ref_delta_total);
+        prop_assert_eq!(prod_r, ref_final_r);
+    }
+
+    /// **Multi-step conservation: the §14 #75 identity holds
+    /// across any inline-formula chain**. Same identity that
+    /// `b_booking_rec_conservation` proves on the reference, but
+    /// computed via the production formula directly:
+    /// `total_delta * W + final_R = R0 + sum_of_scaled_chunks`.
+    #[test]
+    fn multistep_production_formula_conserves(
+        chunks in prop::collection::vec(0u128..=1_000u128, 1..30),
+        w in 1u128..=SOCIAL_LOSS_DEN,
+        r0 in 0u128..=SOCIAL_LOSS_DEN,
+    ) {
+        let mut prod_delta_total: u128 = 0;
+        let mut prod_r = r0;
+        let mut scaled_chunks_sum: u128 = 0;
+        for &c in &chunks {
+            let (delta, r_new) = production_inline_step(c, prod_r, w);
+            prod_delta_total += delta;
+            prod_r = r_new;
+            scaled_chunks_sum += c * PROD_SOCIAL_LOSS_DEN;
+        }
+
+        prop_assert_eq!(
+            prod_delta_total * w + prod_r,
+            r0 + scaled_chunks_sum
+        );
+    }
+
+    /// **Multi-step remainder bound stays in range**: across any
+    /// chain length, the cumulative remainder is bounded by W —
+    /// no integer overflow, no drift past the modulus.
+    #[test]
+    fn multistep_production_remainder_in_range(
+        chunks in prop::collection::vec(0u128..=1_000u128, 1..30),
+        w in 1u128..=SOCIAL_LOSS_DEN,
+        r0 in 0u128..=SOCIAL_LOSS_DEN,
+    ) {
+        let mut prod_r = r0;
+        for &c in &chunks {
+            let (_delta, r_new) = production_inline_step(c, prod_r, w);
+            prop_assert!(r_new < w);
+            prod_r = r_new;
+        }
+    }
+}

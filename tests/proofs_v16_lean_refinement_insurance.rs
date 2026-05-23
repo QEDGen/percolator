@@ -524,3 +524,199 @@ proptest! {
         }
     }
 }
+
+// ============================================================================
+// Multi-step sequence bridges — Week 2 deepening
+//
+// The connector above proves single-step refinement: one production
+// reserve call matches one reference-port reserve. This section
+// extends the bridge to *sequences*: a chain of N reserve actions
+// against the same domain must keep the production state in lock-
+// step with the reference port after every step.
+//
+// Sequencing bugs that single-step tests miss include:
+//   - Side effects between steps (e.g. refresh_source_credit_domain_after_mutation)
+//     that alter cross-state in ways the abstraction doesn't capture.
+//   - Order-dependent acceptance/rejection where production accepts
+//     a step that violates a future invariant the reference would
+//     catch.
+//   - Drift over many steps where the abstraction and production
+//     diverge by a tiny amount per step.
+// ============================================================================
+
+/// A scripted action for the multi-step harness.
+#[derive(Clone, Copy, Debug)]
+enum ProductionAction {
+    /// Call `reserve_insurance_credit_not_atomic(0, amount_atoms * BOUND_SCALE)`.
+    Reserve(u128),
+}
+
+fn arb_action() -> impl Strategy<Value = ProductionAction> {
+    (0u128..=500u128).prop_map(ProductionAction::Reserve)
+}
+
+proptest! {
+    /// **Multi-step refinement: production and reference stay in
+    /// lockstep across N reserves**. After each successful step,
+    /// the production state's abstraction equals the reference
+    /// port's state. If at any step production accepts what the
+    /// reference rejects (or post-states diverge), the test fails.
+    #[test]
+    fn multistep_reserve_lockstep(
+        budget_atoms in 1_000u128..=50_000u128,
+        actions in prop::collection::vec(arb_action(), 1..15),
+    ) {
+        let Some(mut g) = setup_group_for_insurance_reserve(budget_atoms, 0)
+        else {
+            return Ok(());
+        };
+        let mut r = abstract_insurance(&g, 0);
+        prop_assert!(r.is_conserved());
+
+        for action in actions {
+            // Snapshot pre-step abstractions.
+            let pre_abstract = abstract_insurance(&g, 0);
+            prop_assert_eq!(pre_abstract, r);
+
+            // Apply the action in lockstep.
+            let amount_atoms = match action {
+                ProductionAction::Reserve(a) => a,
+            };
+            let amount_bound = match amount_atoms.checked_mul(BOUND_SCALE) {
+                Some(v) => v,
+                None => break,
+            };
+            let prod_ok = g
+                .reserve_insurance_credit_not_atomic(0, amount_bound)
+                .is_ok();
+            let ref_post = r.reserve(amount_atoms);
+
+            match (prod_ok, ref_post) {
+                (true, Some(r_post)) => {
+                    // Both accepted: post-state abstractions must match.
+                    let post_abstract = abstract_insurance(&g, 0);
+                    prop_assert_eq!(post_abstract, r_post);
+                    r = r_post;
+                }
+                (false, _) => {
+                    // Production refused — stop the trace (reference may
+                    // or may not have accepted; production is stricter
+                    // due to global cap / encumbrance checks).
+                    break;
+                }
+                (true, None) => {
+                    // Refinement violation: production accepted what
+                    // reference rejected.
+                    prop_assert!(
+                        false,
+                        "lockstep violation at step: production accepted but reference rejected"
+                    );
+                }
+            }
+        }
+    }
+
+    /// **Multi-step conservation invariant**: after any sequence of
+    /// production reserves, the per-domain conservation invariant
+    /// (reserved + spent ≤ budget) holds. The reference port carries
+    /// this as a struct field; production maintains it as an
+    /// engine-level invariant.
+    #[test]
+    fn multistep_reserve_preserves_conservation(
+        budget_atoms in 1_000u128..=50_000u128,
+        actions in prop::collection::vec(arb_action(), 1..20),
+    ) {
+        let Some(mut g) = setup_group_for_insurance_reserve(budget_atoms, 0)
+        else {
+            return Ok(());
+        };
+        let mut last_action_succeeded = true;
+
+        for action in actions {
+            let amount_atoms = match action {
+                ProductionAction::Reserve(a) => a,
+            };
+            let amount_bound = match amount_atoms.checked_mul(BOUND_SCALE) {
+                Some(v) => v,
+                None => break,
+            };
+            last_action_succeeded = g
+                .reserve_insurance_credit_not_atomic(0, amount_bound)
+                .is_ok();
+            // After any step (whether accepted or rejected), conservation
+            // still holds on the production state.
+            let reserved_atoms = g.insurance_credit_reservations[0]
+                .insurance_credit_reserved_num
+                .div_ceil(BOUND_SCALE);
+            prop_assert!(
+                reserved_atoms + g.insurance_domain_spent[0]
+                    <= g.insurance_domain_budget[0]
+            );
+        }
+        // Suppress unused-warning when traces succeed fully.
+        let _ = last_action_succeeded;
+    }
+
+    /// **Sequence of N reserves up to budget then one over**: after
+    /// reserving budget/k each time, k times, the (k+1)-th reserve
+    /// should fail closed in both production and reference. This is
+    /// an explicit boundary test of the sequencing bridge.
+    #[test]
+    fn sequence_exhausts_then_rejects(
+        k in 2u128..=5u128,
+        chunk_atoms in 100u128..=500u128,
+    ) {
+        let budget_atoms = k * chunk_atoms + chunk_atoms / 2; // not enough for k+1 chunks
+        let Some(mut g) = setup_group_for_insurance_reserve(budget_atoms, 0)
+        else {
+            return Ok(());
+        };
+        let mut r = abstract_insurance(&g, 0);
+
+        let amount_bound = match chunk_atoms.checked_mul(BOUND_SCALE) {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+
+        // First k reserves should succeed in lockstep.
+        for _ in 0..k {
+            let prod_ok = g
+                .reserve_insurance_credit_not_atomic(0, amount_bound)
+                .is_ok();
+            let ref_post = r.reserve(chunk_atoms);
+            match (prod_ok, ref_post) {
+                (true, Some(r_post)) => {
+                    let abst = abstract_insurance(&g, 0);
+                    prop_assert_eq!(abst, r_post);
+                    r = r_post;
+                }
+                _ => {
+                    // Production may reject earlier than reference due to
+                    // stricter global checks. That's OK — break here.
+                    return Ok(());
+                }
+            }
+        }
+
+        // (k+1)-th reserve: reference should reject (budget left <
+        // chunk).
+        let r_overflow = r.reserve(chunk_atoms);
+        prop_assert!(r_overflow.is_none());
+
+        // Production may accept (because of rounding via amount_from_bound_num
+        // or because the BOUND-unit representation has some slack);
+        // if it does, the abstraction must agree with the reference
+        // (which rejected) — which would be a refinement violation.
+        let prod_overflow_ok = g
+            .reserve_insurance_credit_not_atomic(0, amount_bound)
+            .is_ok();
+        if prod_overflow_ok {
+            // The reference rejects this; if production accepts, we
+            // have a refinement violation.
+            prop_assert!(
+                false,
+                "production accepted budget-overflow reserve that reference rejected: k={k} chunk_atoms={chunk_atoms} budget_atoms={budget_atoms}"
+            );
+        }
+    }
+}

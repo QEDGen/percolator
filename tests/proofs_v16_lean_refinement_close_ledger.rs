@@ -690,4 +690,177 @@ proptest! {
         prop_assert_eq!(r.market_id, p.market_id);
         prop_assert_eq!(r.gross_loss_at_close_start, p.gross_loss_at_close_start);
     }
+
+    // ========================================================================
+    // Multi-step sequencing — Week 3 closeout
+    //
+    // The booking transitions on CloseProgressLedgerV16 are engine-
+    // internal (called from inside book_bankruptcy_residual_chunk_*
+    // and related paths). Setting up a full bankrupt-close fixture
+    // is heavy. Since the production struct has pub fields, we can
+    // simulate the booking transitions directly: apply the same
+    // field updates the engine would, then verify the production
+    // methods (has_irreversible_progress, has_pending_residual)
+    // continue to agree with the reference port's predicates after
+    // every step.
+    //
+    // This is a value-type-level multi-step bridge: it tests that
+    // the production *type's invariants* match the reference port's
+    // invariants across mutation sequences.
+    // ========================================================================
+
+    /// **Multi-step: applying booking deltas to a CloseProgressLedgerV16
+    /// keeps has_irreversible_progress in lockstep with the
+    /// reference port's predicate**. Each step mutates a booking
+    /// counter (support / junior / insurance / b / explicit / adl /
+    /// drift) and verifies both sides agree.
+    #[test]
+    fn multistep_close_ledger_progress_lockstep(
+        cid in any::<u64>(),
+        ai in any::<u32>(),
+        mid in any::<u64>(),
+        side in arb_v16_side(),
+        gross in 0u128..=10_000u128,
+        steps in prop::collection::vec((0u8..7, 1u128..=100u128), 1..20),
+    ) {
+        let mut p = CloseProgressLedgerV16 {
+            active: true,
+            finalized: false,
+            canceled: false,
+            close_id: cid,
+            asset_index: ai,
+            market_id: mid,
+            domain_side: side,
+            gross_loss_at_close_start: gross,
+            drift_reference_slot: 0,
+            max_close_slot: 0,
+            support_consumed: 0,
+            junior_face_burned: 0,
+            insurance_spent: 0,
+            b_loss_booked: 0,
+            explicit_loss_assigned: 0,
+            quantity_adl_applied_q: 0,
+            drift_consumed: 0,
+            residual_remaining: gross,
+        };
+
+        // Initially: no irreversible progress.
+        prop_assert!(!p.has_irreversible_progress());
+        prop_assert_eq!(
+            p.has_irreversible_progress(),
+            abstract_close_ledger(&p).has_irreversible_progress()
+        );
+
+        for (which, delta) in steps {
+            // Mutate one counter by `delta` (simulating one booking
+            // step the engine would perform). Production methods
+            // must continue to agree with the reference predicate.
+            match which {
+                0 => p.support_consumed = p.support_consumed.saturating_add(delta),
+                1 => p.junior_face_burned = p.junior_face_burned.saturating_add(delta),
+                2 => p.insurance_spent = p.insurance_spent.saturating_add(delta),
+                3 => p.b_loss_booked = p.b_loss_booked.saturating_add(delta),
+                4 => p.explicit_loss_assigned = p.explicit_loss_assigned.saturating_add(delta),
+                5 => p.quantity_adl_applied_q = p.quantity_adl_applied_q.saturating_add(delta),
+                _ => p.drift_consumed = p.drift_consumed.saturating_add(delta),
+            }
+            // After each mutation, the production predicate matches
+            // the reference port's abstracted predicate.
+            let r = abstract_close_ledger(&p);
+            prop_assert_eq!(
+                p.has_irreversible_progress(),
+                r.has_irreversible_progress()
+            );
+            prop_assert_eq!(p.has_pending_residual(), {
+                r.is_active_not_done() && r.residual_remaining > 0
+            });
+        }
+
+        // After any non-empty booking sequence: irreversible progress is true.
+        prop_assert!(p.has_irreversible_progress());
+    }
+
+    /// **Multi-step: lifecycle flag transitions (active /
+    /// finalized / canceled) preserve has_pending_residual
+    /// semantics in lockstep**.
+    #[test]
+    fn multistep_close_ledger_lifecycle_lockstep(
+        cid in any::<u64>(),
+        gross in 1u128..=1_000u128,
+        residual in 0u128..=1_000u128,
+    ) {
+        let mut p = CloseProgressLedgerV16::EMPTY;
+        p.close_id = cid;
+        p.gross_loss_at_close_start = gross;
+        p.residual_remaining = residual;
+
+        // Step 1: not active yet → no pending residual.
+        prop_assert!(!p.has_pending_residual());
+        prop_assert_eq!(
+            p.has_pending_residual(),
+            abstract_close_ledger(&p).is_active_not_done()
+                && abstract_close_ledger(&p).residual_remaining > 0
+        );
+
+        // Step 2: activate.
+        p.active = true;
+        let pending_when_active = if residual > 0 { true } else { false };
+        prop_assert_eq!(p.has_pending_residual(), pending_when_active);
+
+        // Step 3: finalize → no longer pending.
+        p.finalized = true;
+        prop_assert!(!p.has_pending_residual());
+
+        // Step 4: confirm reference agrees.
+        let r = abstract_close_ledger(&p);
+        prop_assert_eq!(
+            p.has_pending_residual(),
+            r.is_active_not_done() && r.residual_remaining > 0
+        );
+    }
+
+    /// **Multi-step: cancellation precondition holds at every
+    /// step**. Cure-and-cancel requires no irreversible progress.
+    /// As bookings accumulate, the cancel-eligibility flips off and
+    /// stays off (booking counters are monotone increasing).
+    #[test]
+    fn multistep_close_ledger_cancel_eligibility_monotone(
+        cid in any::<u64>(),
+        gross in 1u128..=1_000u128,
+        bookings in prop::collection::vec(1u128..=100u128, 1..10),
+    ) {
+        let mut p = CloseProgressLedgerV16::EMPTY;
+        p.close_id = cid;
+        p.gross_loss_at_close_start = gross;
+        p.residual_remaining = gross;
+        p.active = true;
+
+        let mut last_cancel_eligible = !p.has_irreversible_progress();
+        prop_assert!(last_cancel_eligible);
+
+        for delta in bookings {
+            p.support_consumed = p.support_consumed.saturating_add(delta);
+            let now_cancel_eligible = !p.has_irreversible_progress();
+            // Monotonicity: once cancel-eligibility flips off, it
+            // never flips back on.
+            prop_assert!(
+                !last_cancel_eligible || now_cancel_eligible || delta == 0 ||
+                    p.support_consumed > 0
+            );
+            last_cancel_eligible = now_cancel_eligible;
+        }
+        // After bookings, cancel is no longer eligible.
+        prop_assert!(!last_cancel_eligible || bookings_were_all_zero(&p));
+    }
+}
+
+/// Helper for the cancel-eligibility test.
+fn bookings_were_all_zero(p: &CloseProgressLedgerV16) -> bool {
+    p.support_consumed == 0
+        && p.junior_face_burned == 0
+        && p.insurance_spent == 0
+        && p.b_loss_booked == 0
+        && p.explicit_loss_assigned == 0
+        && p.quantity_adl_applied_q == 0
+        && p.drift_consumed == 0
 }

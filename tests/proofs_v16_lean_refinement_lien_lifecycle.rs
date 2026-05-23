@@ -574,4 +574,106 @@ proptest! {
             prop_assert_eq!(post_spent, pre_spent + consume_amount);
         }
     }
+
+    // ========================================================================
+    // Multi-step sequencing — Week 2 deepening
+    // ========================================================================
+
+    /// **Sum of valid_liened + spent_backing equals total created**:
+    /// over any sequence of create / consume / release, the
+    /// production aggregate `valid_liened_backing_num +
+    /// spent_backing_num + (fresh_unliened released back)` tracks
+    /// the cumulative create amount minus total released. This
+    /// is the multi-step bookkeeping invariant.
+    #[test]
+    fn multistep_aggregate_tracking(
+        fresh in 5_000u128..=10_000u128,
+        actions in prop::collection::vec((0u8..3, 1u128..=200u128), 1..15),
+    ) {
+        let Some(mut g) = group_with_lien_setup(fresh, fresh) else {
+            return Ok(());
+        };
+        let mut cumulative_created: u128 = 0;
+        let mut cumulative_consumed: u128 = 0;
+        let mut cumulative_released: u128 = 0;
+
+        for (op, amount) in actions {
+            let pre_valid = g.source_credit[0].valid_liened_backing_num;
+            let pre_spent = g.source_credit[0].spent_backing_num;
+            match op {
+                0 => {
+                    // create
+                    if g.create_source_credit_lien_from_counterparty_not_atomic(0, amount)
+                        .is_ok()
+                    {
+                        cumulative_created += amount;
+                        let post_valid = g.source_credit[0].valid_liened_backing_num;
+                        prop_assert_eq!(post_valid, pre_valid + amount);
+                    }
+                }
+                1 => {
+                    // release
+                    if g.release_source_credit_lien_from_counterparty_not_atomic(0, amount)
+                        .is_ok()
+                    {
+                        cumulative_released += amount;
+                        let post_valid = g.source_credit[0].valid_liened_backing_num;
+                        prop_assert_eq!(post_valid + amount, pre_valid);
+                    }
+                }
+                _ => {
+                    // consume
+                    if g.consume_source_credit_lien_from_counterparty_not_atomic(0, amount)
+                        .is_ok()
+                    {
+                        cumulative_consumed += amount;
+                        let post_valid = g.source_credit[0].valid_liened_backing_num;
+                        let post_spent = g.source_credit[0].spent_backing_num;
+                        prop_assert_eq!(post_valid + amount, pre_valid);
+                        prop_assert_eq!(post_spent, pre_spent + amount);
+                    }
+                }
+            }
+        }
+
+        // Cumulative invariant:
+        //   final_valid = created - released - consumed
+        //   final_spent = consumed
+        // Sum: final_valid + final_spent = created - released
+        // ↔   final_valid + final_spent + released = created
+        let final_valid = g.source_credit[0].valid_liened_backing_num;
+        let final_spent = g.source_credit[0].spent_backing_num;
+        let _ = cumulative_consumed;  // tracked but already captured by final_spent
+        prop_assert_eq!(
+            final_valid + final_spent + cumulative_released,
+            cumulative_created
+        );
+    }
+
+    /// **Create-then-release inverts at the source-credit
+    /// aggregate**: creating amount A then releasing A leaves the
+    /// source_credit[d].valid_liened_backing_num at its prior
+    /// value.
+    #[test]
+    fn multistep_create_release_inverts_at_aggregate(
+        fresh in 100u128..=5_000u128,
+        amount in 1u128..=100u128,
+    ) {
+        prop_assume!(amount <= fresh);
+
+        let Some(mut g) = group_with_lien_setup(fresh, fresh) else {
+            return Ok(());
+        };
+        let pre_valid = g.source_credit[0].valid_liened_backing_num;
+
+        if g.create_source_credit_lien_from_counterparty_not_atomic(0, amount).is_err() {
+            return Ok(());
+        }
+        if g.release_source_credit_lien_from_counterparty_not_atomic(0, amount).is_err() {
+            return Ok(());
+        }
+
+        let post_valid = g.source_credit[0].valid_liened_backing_num;
+        prop_assert_eq!(post_valid, pre_valid);
+    }
 }

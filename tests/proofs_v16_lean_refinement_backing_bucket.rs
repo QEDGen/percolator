@@ -604,3 +604,210 @@ proptest! {
 // silence unused-import lint in some configurations
 #[allow(unused_imports)]
 use BackingBucketV16 as _BackingBucketV16Used;
+
+// ============================================================================
+// Multi-step sequence bridges — Week 2 deepening
+//
+// Multi-step refinement harness for `BackingBucketV16` chains: a
+// random sequence of `create_lien` / `release_lien` / `consume_lien`
+// calls against the production engine, mirrored on the reference
+// port. After each step, the production bucket's abstraction must
+// equal the reference port's bucket.
+//
+// Sequencing scenarios that single-step tests miss:
+//   - Composite invariants that hold only across multiple steps
+//     (e.g. create-then-release returns to the prior state).
+//   - Order-dependent state machines (consume after create_then_release
+//     uses different reserves).
+//   - Long chains where small per-step drift accumulates.
+// ============================================================================
+
+/// A scripted bucket action for the multi-step harness. Amounts are
+/// constrained at sample time so the operations are likely to
+/// succeed.
+#[derive(Clone, Copy, Debug)]
+enum BucketAction {
+    CreateLien(u128),
+    ReleaseLien(u128),
+    ConsumeLien(u128),
+}
+
+fn arb_bucket_action() -> impl Strategy<Value = BucketAction> {
+    (0u8..3, 1u128..=1_000u128).prop_map(|(op, amt)| match op {
+        0 => BucketAction::CreateLien(amt),
+        1 => BucketAction::ReleaseLien(amt),
+        _ => BucketAction::ConsumeLien(amt),
+    })
+}
+
+proptest! {
+    /// **Multi-step lockstep: production and reference agree across
+    /// N lien operations**. After each successful production call,
+    /// the abstracted bucket equals the reference port's bucket.
+    ///
+    /// Crucially: any time production *accepts* a step, the
+    /// reference port must also accept it, and the post-states
+    /// must match field-by-field. This catches sequencing drift.
+    #[test]
+    fn multistep_bucket_lockstep(
+        initial_fresh in 1_000u128..=10_000u128,
+        claim_bound in 1_000u128..=10_000u128,
+        actions in prop::collection::vec(arb_bucket_action(), 1..15),
+    ) {
+        let Some(mut g) = setup_group_with_fresh_backing(initial_fresh, claim_bound) else {
+            return Ok(());
+        };
+        let mut r = abstract_bucket(&g, 0);
+
+        for action in actions {
+            // Snapshot pre-step (sanity).
+            let pre_abstract = abstract_bucket(&g, 0);
+            prop_assert_eq!(pre_abstract, r);
+
+            // Apply in lockstep.
+            let (prod_ok, ref_post) = match action {
+                BucketAction::CreateLien(amount) => {
+                    let prod = g
+                        .create_source_credit_lien_from_counterparty_not_atomic(0, amount)
+                        .is_ok();
+                    (prod, r.lien_against(amount))
+                }
+                BucketAction::ReleaseLien(amount) => {
+                    let prod = g
+                        .release_source_credit_lien_from_counterparty_not_atomic(0, amount)
+                        .is_ok();
+                    (prod, r.release_lien(amount))
+                }
+                BucketAction::ConsumeLien(amount) => {
+                    let prod = g
+                        .consume_source_credit_lien_from_counterparty_not_atomic(0, amount)
+                        .is_ok();
+                    (prod, r.consume_lien(amount))
+                }
+            };
+
+            match (prod_ok, ref_post) {
+                (true, Some(r_post)) => {
+                    let post_abstract = abstract_bucket(&g, 0);
+                    // Match on the four backing partitions (other
+                    // fields like market_id are anchors and don't
+                    // change).
+                    prop_assert_eq!(post_abstract.fresh_unliened, r_post.fresh_unliened);
+                    prop_assert_eq!(post_abstract.valid_liened, r_post.valid_liened);
+                    prop_assert_eq!(post_abstract.consumed_liened, r_post.consumed_liened);
+                    prop_assert_eq!(post_abstract.impaired_liened, r_post.impaired_liened);
+                    r = r_post;
+                }
+                (false, _) => {
+                    // Production refused — stop the trace.
+                    break;
+                }
+                (true, None) => {
+                    prop_assert!(
+                        false,
+                        "lockstep violation: production accepted but reference rejected: {:?}",
+                        action
+                    );
+                }
+            }
+        }
+    }
+
+    /// **Multi-step total_backing conservation**: across any sequence
+    /// of create / release / consume / impair operations, the
+    /// four-partition sum on the production side stays equal to
+    /// the original total. The reference port carries this as a
+    /// theorem; this test verifies production matches.
+    #[test]
+    fn multistep_total_backing_invariant(
+        initial_fresh in 1_000u128..=10_000u128,
+        actions in prop::collection::vec(arb_bucket_action(), 1..20),
+    ) {
+        let Some(mut g) = setup_group_with_fresh_backing(initial_fresh, initial_fresh) else {
+            return Ok(());
+        };
+        let initial_total = abstract_bucket(&g, 0).total_backing();
+
+        for action in actions {
+            let _ok = match action {
+                BucketAction::CreateLien(a) => {
+                    g.create_source_credit_lien_from_counterparty_not_atomic(0, a).is_ok()
+                }
+                BucketAction::ReleaseLien(a) => {
+                    g.release_source_credit_lien_from_counterparty_not_atomic(0, a).is_ok()
+                }
+                BucketAction::ConsumeLien(a) => {
+                    g.consume_source_credit_lien_from_counterparty_not_atomic(0, a).is_ok()
+                }
+            };
+            let post_total = abstract_bucket(&g, 0).total_backing();
+            prop_assert_eq!(post_total, initial_total);
+        }
+    }
+
+    /// **Round-trip: create N then release N restores original
+    /// state**. A canonical sequencing test — if create_lien and
+    /// release_lien are correctly paired, the bucket returns to
+    /// its prior partition layout.
+    #[test]
+    fn create_then_release_round_trips(
+        initial_fresh in 100u128..=5_000u128,
+        amount in 1u128..=100u128,
+    ) {
+        prop_assume!(amount <= initial_fresh);
+
+        let Some(mut g) = setup_group_with_fresh_backing(initial_fresh, initial_fresh) else {
+            return Ok(());
+        };
+        let pre = abstract_bucket(&g, 0);
+
+        if g.create_source_credit_lien_from_counterparty_not_atomic(0, amount).is_err() {
+            return Ok(());
+        }
+        if g.release_source_credit_lien_from_counterparty_not_atomic(0, amount).is_err() {
+            return Ok(());
+        }
+
+        let post = abstract_bucket(&g, 0);
+        prop_assert_eq!(post.fresh_unliened, pre.fresh_unliened);
+        prop_assert_eq!(post.valid_liened, pre.valid_liened);
+        prop_assert_eq!(post.consumed_liened, pre.consumed_liened);
+        prop_assert_eq!(post.impaired_liened, pre.impaired_liened);
+    }
+
+    /// **Sequence of consumes monotonically grows consumed_liened**:
+    /// every successful consume strictly increases the consumed
+    /// counter; sum of consumed amounts equals the total increment.
+    #[test]
+    fn multistep_consumes_grow_consumed_monotonically(
+        initial_fresh in 1_000u128..=5_000u128,
+        amounts in prop::collection::vec(1u128..=100u128, 1..10),
+    ) {
+        let Some(mut g) = setup_group_with_fresh_backing(initial_fresh, initial_fresh) else {
+            return Ok(());
+        };
+        // First create one big lien.
+        let total_to_lien: u128 = amounts.iter().sum();
+        if total_to_lien > initial_fresh {
+            return Ok(());
+        }
+        if g.create_source_credit_lien_from_counterparty_not_atomic(0, total_to_lien).is_err() {
+            return Ok(());
+        }
+
+        let mut total_consumed_expected: u128 = 0;
+        let pre_consumed = abstract_bucket(&g, 0).consumed_liened;
+
+        for amount in amounts {
+            let pre = abstract_bucket(&g, 0).consumed_liened;
+            if g.consume_source_credit_lien_from_counterparty_not_atomic(0, amount).is_ok() {
+                let post = abstract_bucket(&g, 0).consumed_liened;
+                prop_assert_eq!(post, pre + amount);
+                total_consumed_expected += amount;
+            }
+        }
+
+        let final_consumed = abstract_bucket(&g, 0).consumed_liened;
+        prop_assert_eq!(final_consumed, pre_consumed + total_consumed_expected);
+    }
+}

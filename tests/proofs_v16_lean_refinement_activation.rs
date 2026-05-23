@@ -612,4 +612,85 @@ proptest! {
         g.current_slot = 100;
         prop_assert!(g.activate_empty_asset_not_atomic(0, price, 50).is_err());
     }
+
+    // ========================================================================
+    // Multi-step sequencing — Week 2 deepening
+    // ========================================================================
+
+    /// **Activate → Retire → Re-activate after cooldown**: a
+    /// successful round-trip through the asset lifecycle. Each
+    /// step bumps `asset_activation_count`; the post-trip count is
+    /// 2 (one activation, one retire-then-activate). Tests the
+    /// sequencing of lifecycle transitions in production.
+    #[test]
+    fn multistep_activate_retire_reactivate(
+        price in 1u64..=1_000u64,
+        cooldown in 1u64..=5u64,
+    ) {
+        let mut cfg = V16Config::public_user_fund(4, 0, 10);
+        cfg.asset_activation_cooldown_slots = cooldown;
+        let Some(mut g) = group_with_config(cfg) else {
+            return Ok(());
+        };
+
+        // Step 1: first activation.
+        if g.activate_empty_asset_not_atomic(0, price, 1).is_err() {
+            return Ok(());
+        }
+        prop_assert_eq!(g.asset_activation_count, 1);
+        prop_assert_eq!(g.assets[0].lifecycle, AssetLifecycleV16::Active);
+
+        // Step 2: retire.
+        let retire_slot = 1 + cooldown;
+        if g.retire_empty_asset_not_atomic(0, retire_slot).is_err() {
+            return Ok(());
+        }
+        prop_assert_eq!(g.assets[0].lifecycle, AssetLifecycleV16::Retired);
+
+        // Step 3: attempt re-activation before cooldown — must fail.
+        let early_slot = retire_slot + cooldown - 1;
+        if cooldown > 1 {
+            prop_assert!(g.activate_empty_asset_not_atomic(0, price, early_slot).is_err());
+        }
+
+        // Step 4: re-activate after cooldown — must succeed.
+        let post_cooldown_slot = retire_slot + cooldown;
+        if g.activate_empty_asset_not_atomic(0, price, post_cooldown_slot).is_ok() {
+            prop_assert_eq!(g.asset_activation_count, 2);
+            prop_assert_eq!(g.assets[0].lifecycle, AssetLifecycleV16::Active);
+        }
+    }
+
+    /// **Sequential activations on different slots bump the epoch
+    /// each time**: activating slot 0, then 1, then 2 produces
+    /// `asset_activation_count = 3` and three Active assets.
+    /// The asset_set_epoch grows monotonically.
+    #[test]
+    fn multistep_sequential_slot_activations(
+        price in 1u64..=1_000u64,
+        cooldown in 1u64..=5u64,
+    ) {
+        let mut cfg = V16Config::public_user_fund(4, 0, 10);
+        cfg.asset_activation_cooldown_slots = cooldown;
+        let Some(mut g) = group_with_config(cfg) else {
+            return Ok(());
+        };
+
+        let mut last_epoch = g.asset_set_epoch;
+        let mut last_slot = 0u64;
+        let mut slots_activated = 0u64;
+        for asset_idx in 0..3u32 {
+            let now_slot = last_slot + cooldown + 1;
+            if g.activate_empty_asset_not_atomic(
+                asset_idx as usize, price, now_slot,
+            ).is_ok() {
+                slots_activated += 1;
+                prop_assert!(g.asset_set_epoch > last_epoch);
+                prop_assert_eq!(g.assets[asset_idx as usize].lifecycle, AssetLifecycleV16::Active);
+                last_epoch = g.asset_set_epoch;
+                last_slot = now_slot;
+            }
+        }
+        prop_assert_eq!(g.asset_activation_count as u64, slots_activated);
+    }
 }

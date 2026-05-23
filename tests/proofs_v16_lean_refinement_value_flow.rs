@@ -587,3 +587,89 @@ proptest! {
 fn _class_mapping_smoke(c: TokenValueClassV16) -> TokenValueClass {
     class_from_v16(c)
 }
+
+// ============================================================================
+// Multi-step sequencing — Week 2 deepening
+// ============================================================================
+
+proptest! {
+    /// **Chained internal transfers stay balanced**: building a
+    /// TokenValueFlow by appending many transfer rows preserves
+    /// `total_debit = total_credit` at every step (the §14 #2
+    /// invariant). The production side does this via successive
+    /// `validate()` calls on growing flows.
+    #[test]
+    fn multistep_flow_remains_balanced(
+        actions in prop::collection::vec(
+            (arb_token_value_class(), arb_token_value_class(), 0u128..=1_000u128),
+            1..15,
+        ),
+        vault in 0u128..=1_000_000u128,
+    ) {
+        let mut f = TokenValueFlow::empty(vault, vault);
+        for (d, c, amt) in actions {
+            f = f.add_row(d, c, amt);
+            // After each row added, the flow remains balanced.
+            prop_assert_eq!(f.total_debit(), f.total_credit());
+        }
+    }
+
+    /// **Per-class accumulation matches expected sums after a
+    /// chain of internal transfers from a single class**.
+    /// Repeatedly transferring out of AccountCapital into various
+    /// destinations: the AccountCapital debit total equals the
+    /// sum of transferred amounts.
+    #[test]
+    fn multistep_per_class_aggregates(
+        amounts in prop::collection::vec(0u128..=1_000u128, 1..10),
+    ) {
+        let mut f = TokenValueFlow::empty(0, 0);
+        let mut total_out: u128 = 0;
+        for amt in amounts {
+            f = f.add_row(
+                TokenValueClass::AccountCapital,
+                TokenValueClass::InsuranceCapital,
+                amt,
+            );
+            total_out += amt;
+            prop_assert_eq!(
+                f.debit_by_class(TokenValueClass::AccountCapital),
+                total_out
+            );
+            prop_assert_eq!(
+                f.credit_by_class(TokenValueClass::InsuranceCapital),
+                total_out
+            );
+        }
+    }
+
+    /// **Production-flow validate stays consistent across
+    /// successive named constructors**: building independent
+    /// production `TokenValueFlowProofV16` values from each named
+    /// constructor and verifying each independently passes
+    /// `validate()`. This exercises the validation idempotency.
+    #[test]
+    fn multistep_named_constructors_independently_valid(
+        amount in 0u128..=1_000u128,
+        vault in 0u128..=1_000_000u128,
+    ) {
+        let p1 = TokenValueFlowProofV16::account_capital_to_insurance(
+            amount, vault, vault,
+        ).expect("c1");
+        let p2 = TokenValueFlowProofV16::insurance_to_close_insurance_spent(
+            amount, vault, vault,
+        ).expect("c2");
+        let p3 = TokenValueFlowProofV16::account_capital_to_realized_loss(
+            amount, vault, vault,
+        ).expect("c3");
+
+        prop_assert!(p1.validate().is_ok());
+        prop_assert!(p2.validate().is_ok());
+        prop_assert!(p3.validate().is_ok());
+
+        // Each proof's debit/credit totals equal `amount`.
+        prop_assert_eq!(prod_total_debit(&p1), amount);
+        prop_assert_eq!(prod_total_debit(&p2), amount);
+        prop_assert_eq!(prod_total_debit(&p3), amount);
+    }
+}

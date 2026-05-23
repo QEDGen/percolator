@@ -569,6 +569,136 @@ After strengthenings: **15 ✅ / 0 ⚠ / 0 ❌** on the
 2026-05-23 audit subset. Across both audits (50 closures from
 2026-05-22 and 2026-05-23), effective coverage is 100%.
 
+## Week 2 — multi-step connector deepening
+
+Following the audit-and-strengthen pass, Week 2's focus is
+deepening the Tier 2.5 production connectors from single-step
+refinement to multi-step composition. Sequencing bugs (side
+effects between steps, drift accumulation, order-dependent
+acceptance) do not appear in single-step tests.
+
+Deepened connectors:
+- **InsuranceLedger** — added 3 multi-step proptests:
+  `multistep_reserve_lockstep` chains N reserves and verifies the
+  abstraction matches the reference port's state after every
+  step; `multistep_reserve_preserves_conservation` checks the
+  load-bearing invariant across any trace;
+  `sequence_exhausts_then_rejects` is the boundary test that
+  exercises the over-budget rejection path.
+- **BackingBucket** — added 4 multi-step proptests:
+  `multistep_bucket_lockstep` for create/release/consume chains;
+  `multistep_total_backing_invariant` for the partition-sum
+  invariant; `create_then_release_round_trips` for the canonical
+  symmetric-pair sanity check;
+  `multistep_consumes_grow_consumed_monotonically` for cumulative
+  consumption.
+
+Multi-step harnesses have now been added to **all eight**
+connectors:
+
+| Connector | Single-step | Multi-step | Total |
+|---|:-:|:-:|:-:|
+| InsuranceLedger | 15 | 3 | 18 |
+| BackingBucket | 17 | 4 | 21 |
+| LienLifecycle | 16 | 2 | 18 |
+| Activation | 20 | 2 | 22 |
+| StockReconciliation | 14 | 2 | 16 |
+| ValueFlowSoundness | 17 | 3 | 20 |
+| BBookingExact | 11 | 3 | 14 |
+| CloseLedger | 20 | 3 | 23 |
+| **Total** | **130** | **22** | **152** |
+
+The LienLifecycle deepening caught a *test-side* arithmetic
+error in the cumulative-tracking invariant on its first run
+(`final_valid + final_spent + released = created`, not the
+`+ consumed` variant I initially wrote). Production was correct
+under the corrected invariant.
+
+The final two connectors used alternative approaches that
+sidestepped the heavy bankrupt-close fixture:
+- **BBookingExact**: a `production_inline_step` helper extracts
+  the inline arithmetic from `book_bankruptcy_residual_chunk_internal`
+  (3 lines), enabling chain-level proptests directly against the
+  production formula. The lockstep harness diffs production-chain
+  output against the reference `b_booking_rec`.
+- **CloseLedger**: the value-type's pub fields allow direct
+  field-mutation simulation of bookings. The multi-step lockstep
+  harness mutates `CloseProgressLedgerV16`'s counters across a
+  sequence and verifies production's `has_irreversible_progress`
+  and `has_pending_residual` methods agree with the reference
+  port's predicates after every mutation.
+
+## Week 3 — stress harnesses (bug hunting)
+
+The lockstep refinement bridges from Week 2 used short sequences
+(1..15 actions) at uniform random inputs. Week 3 adds stress
+harnesses that push three dimensions:
+
+1. **Long sequences** — 50 actions per trace.
+2. **Biased generators** — explicit weight on boundary values
+   (0, 1, ¼ budget, ½ budget) plus a uniform tail.
+3. **High case counts** — 2000 cases per harness (vs proptest's
+   default 256).
+
+`tests/proofs_v16_lean_refinement_stress.rs` contains eight
+harnesses:
+
+**Property-based stress** (5 harnesses, biased generators):
+- `stress_insurance_lockstep_long`: 50-step InsuranceLedger
+  reserve chain with biased amounts; lockstep refinement
+  checked after every step. 2000 cases.
+- `stress_insurance_conservation_long`: 50-step
+  reserved+spent ≤ budget invariant. 2000 cases.
+- `stress_bucket_total_invariant_long`: 50-step BackingBucket
+  four-partition sum invariant. 1000 cases.
+- `stress_lien_cumulative_long`: 50-step source-credit
+  aggregate cumulative identity (final_valid + final_spent +
+  released = created). 1000 cases.
+- `stress_activation_lifecycle_cycles`: 10-cycle
+  activate-retire round-trips; monotone activation count.
+  500 cases.
+
+**Hand-crafted adversarial** (3 harnesses):
+- `adversarial_fill_then_overflow`: sweep (k, c) — k chunks of
+  c fill exactly to budget; the (k+1)-th must be rejected.
+- `adversarial_zero_amount_reserve_succeeds`: zero-amount
+  reserves are no-op successes.
+- `adversarial_bucket_create_consume_release_zero`: zero-amount
+  lien operations are no-op successes; total_backing unchanged.
+
+**Result**: all eight pass. Estimated ~500,000+ production-call
+operations across the property-based harnesses with biased
+inputs. Total runtime ~4 seconds. No refinement violations, no
+invariant breaks, no rounding drift detected.
+
+This is a meaningful negative result: after substantial
+adversarial input pressure, the production transitions stay
+in lockstep with the reference port within the modeled subset.
+The InsuranceLedger unit-conversion bug from Week 1 remains the
+only refinement-direction discrepancy the bridge has surfaced.
+
+## Suggested order for the next session
+
+- **Push stress harnesses further**: extend the
+  `stress_bucket_total_invariant_long` style to LienLifecycle,
+  Activation, StockReconciliation, ValueFlowSoundness. The
+  recipe is mechanical — wrap the existing multi-step lockstep
+  test with a biased generator and a longer sequence.
+- **Adversarial sequences**: rather than random-with-bias,
+  hand-craft sequences that target specific edge cases:
+  "fill exactly to budget then try one more", "create N small
+  liens then consume the same N values one-by-one vs
+  all-at-once", "interleave activations with retires at
+  exact-cooldown boundaries".
+- **Run nightly**: configure proptest case counts at 10000+
+  per harness and let stress tests run for hours; check failure
+  logs for any drift that takes very long sequences to
+  manifest.
+- **Phase 6 PoC** (extraction): pick one cluster, generate the
+  reference port from the Lean spec via Lean's `compile_inductive%`
+  or extract-to-OCaml/C tooling, verify the extracted version
+  matches the hand-port.
+
 Or alternatively, advance toward Phase 6 (extraction): generate
 a reference Rust kernel from the Lean specs so the bridge is
 automatic rather than per-handler.

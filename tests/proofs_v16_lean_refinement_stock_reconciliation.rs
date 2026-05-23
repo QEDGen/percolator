@@ -440,4 +440,88 @@ proptest! {
         prop_assert_eq!(sc.total_v(), proof_total);
         prop_assert!(sc.reconciled(proof.token_vault));
     }
+
+    // ========================================================================
+    // Multi-step sequencing — Week 2 deepening
+    // ========================================================================
+
+    /// **Reconciliation holds across a sequence of engine actions**:
+    /// no matter what sequence of add-claim-bound + add-backing +
+    /// create-lien + release-lien operations the engine processes,
+    /// the production state always abstracts to a reconciled
+    /// StockClasses. This is the most general form of §14 #5.
+    #[test]
+    fn multistep_reconciliation_invariant(
+        seed_amount in 100u128..=5_000u128,
+        actions in prop::collection::vec(0u8..4, 1..15),
+    ) {
+        let Some(mut g) = fresh_group() else {
+            return Ok(());
+        };
+        // Initial setup: add some claim bound and backing.
+        if g.add_source_positive_claim_bound_not_atomic(0, seed_amount, 10).is_err() {
+            return Ok(());
+        }
+        if g.add_fresh_counterparty_backing_not_atomic(0, seed_amount, 10).is_err() {
+            return Ok(());
+        }
+
+        let sc_pre = abstract_stock(&g);
+        prop_assert!(sc_pre.reconciled(g.vault));
+
+        for op in actions {
+            // Apply a randomly chosen engine action. Each is a no-op
+            // if the precondition fails; the goal is to verify
+            // reconciliation invariance regardless of outcome.
+            let _ = match op {
+                0 => g.add_source_positive_claim_bound_not_atomic(0, 100, 10),
+                1 => g.add_fresh_counterparty_backing_not_atomic(0, 100, 10),
+                2 => g.create_source_credit_lien_from_counterparty_not_atomic(0, 50),
+                _ => g.release_source_credit_lien_from_counterparty_not_atomic(0, 50),
+            };
+            // After every action — successful or not — the production
+            // state remains reconciled.
+            let sc = abstract_stock(&g);
+            prop_assert!(sc.reconciled(g.vault));
+            // And the stock_reconciliation_proof emitted at this
+            // moment still validates.
+            if let Ok(proof) = g.stock_reconciliation_proof() {
+                let proof_total = proof.senior_capital_total
+                    + proof.insurance_capital
+                    + proof.settlement_rounding_residue_total
+                    + proof.unallocated_protocol_surplus;
+                prop_assert_eq!(proof_total, proof.token_vault);
+            }
+        }
+    }
+
+    /// **Vault total stays constant under non-vault-modifying
+    /// actions**: lien lifecycle operations don't change vault.
+    /// (They only re-classify backing/encumbrance.)
+    #[test]
+    fn multistep_lien_actions_preserve_vault(
+        seed_amount in 100u128..=5_000u128,
+        actions in prop::collection::vec(0u8..2, 1..15),
+    ) {
+        let Some(mut g) = fresh_group() else {
+            return Ok(());
+        };
+        if g.add_source_positive_claim_bound_not_atomic(0, seed_amount, 10).is_err() {
+            return Ok(());
+        }
+        if g.add_fresh_counterparty_backing_not_atomic(0, seed_amount, 10).is_err() {
+            return Ok(());
+        }
+        let pre_vault = g.vault;
+
+        for op in actions {
+            let _ = match op {
+                0 => g.create_source_credit_lien_from_counterparty_not_atomic(0, 50),
+                _ => g.release_source_credit_lien_from_counterparty_not_atomic(0, 50),
+            };
+            // Lien transitions don't move vault — backing partitions
+            // shift but the total stays the same.
+            prop_assert_eq!(g.vault, pre_vault);
+        }
+    }
 }
