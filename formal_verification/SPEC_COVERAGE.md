@@ -53,7 +53,7 @@ Strength (is the coverage symbolic ∀ or concrete-input?):
   WEAK:   26 invariants (all cited harnesses are concrete-input — fixed fixtures, no symbolic state)
   N/A:    5 invariants (no harnesses to grade — see Confidence: NONE)
 
-Lean coverage (Phases 1–3 of VERIFICATION_PLAN.md, complete):
+Lean coverage (Phases 1–3 of VERIFICATION_PLAN.md complete; Phase 5 cluster 1 (lien lifecycle) in progress):
 
 Phase 1 — arithmetic refinements:
   Percolator/WideMath.lean   — wideningMulU128_correct + 4 corollaries
@@ -100,6 +100,140 @@ Phase 3 — pure-function ports:
   Percolator/ValidateAccountShape.lean — ValidShape predicate aggregating
                                        fee-credit / reserved-PnL / leg-asset
                                        uniqueness / leg-lifecycle conditions.
+
+Phase 5 cluster 1 — lien lifecycle (transition relations):
+  Percolator/LienLifecycle.lean      — Lien.create / .consume / .release / .impair
+                                       transition functions; per-transition
+                                       arithmetic theorems closing §14 #32,
+                                       #37, #39, #21/#31, and #19/#30 (the
+                                       single-lien conservation half).
+
+Phase 5 cluster 3 — backing bucket lifecycle:
+  Percolator/BackingBucket.lean      — BackingBucket model + openFresh /
+                                       expire / markImpaired / lienAgainst /
+                                       consumeLien / releaseLien / impairLien
+                                       transitions; aggregation lemmas
+                                       (sumAvailable / sumFreshUnliened).
+                                       Closes §14 #34, #35, #36, #40.
+
+Phase 5 cluster 6 — conservation and reconciliation:
+  Percolator/BBookingExact.lean      — bBookingStep (single-step
+                                       residual booking arithmetic);
+                                       exact-conservation theorem
+                                       (delta_B * W + new_R =
+                                       chunk * SOCIAL_LOSS_DEN + R);
+                                       remainder-< W bound; explicit
+                                       delta/remainder forms;
+                                       monotone-in-chunk; zero-chunk
+                                       degenerate; bBookingRec
+                                       (multi-chunk recursion) + the
+                                       conservation lemma across an
+                                       arbitrary chunk sequence.
+                                       Closes §14 #75.
+  Percolator/StockReconciliation.lean — StockClasses 10-tuple +
+                                       totalV; reconciled predicate
+                                       at any vault V; ClassLedgers
+                                       O(1) source-of-truth bridge
+                                       with matchesLedgers and
+                                       per-class projections;
+                                       DriftReserveBackingClass
+                                       inductive forcing single-class
+                                       mapping; RoundingSplit with
+                                       residue/flow-balances theorem
+                                       (sum(A_j) + residue = X);
+                                       ResidueSink with applyResidue
+                                       to settlement-residue or
+                                       protocol-surplus class;
+                                       HealthBackingPayoutWitness
+                                       only constructible from
+                                       userClaim role — protocolOwned
+                                       (residue/surplus) refused.
+                                       Closes §14 #5, #95, #96, #97,
+                                       #98, #99.
+  Percolator/InsuranceLedger.lean    — InsuranceLedger with embedded
+                                       conservation proof field;
+                                       reserve / release / consume
+                                       lifecycle helpers each
+                                       preserving conservation in
+                                       their construction;
+                                       consume_atomic_decrement_and_spend
+                                       (reservation -= amount and
+                                       domainSpent += amount in one
+                                       step); InsuranceTxn +
+                                       applySeq sequence-of-flows
+                                       model with conservation
+                                       holding after any prefix.
+                                       Closes the deferred §14 #13
+                                       and #14 from cluster 2.
+
+Phase 5 cluster 4 — close progress and priority:
+  Percolator/ClosePriority.lean      — ClosePriority record (4-tuple),
+                                       lex strict-less-than over
+                                       (deficit DESC, notional DESC,
+                                       drift_slot ASC, closeId ASC);
+                                       lt_irrefl / lt_asymm / lt_trans /
+                                       lt_trichotomy; no_two_cycle /
+                                       no_three_cycle from asymmetry +
+                                       transitivity;
+                                       distinct_closeId_strictly_comparable.
+                                       Closes §14 #68, #92, #93.
+  Percolator/CloseLedger.lean        — CloseLedger record mirroring
+                                       v16.rs::CloseProgressLedgerV16;
+                                       transition methods (bookSupport,
+                                       bookInsurance, bookB,
+                                       bookExplicit,
+                                       bookPendingObligation, addDrift,
+                                       applyQuantityAdl, finalize,
+                                       cureAndCancel); anchorsEq +
+                                       per-transition preservation
+                                       theorems; per-transition residual
+                                       strict-decrease (+ drift dual);
+                                       bookPendingObligation atomic
+                                       credit-debit match;
+                                       per-transition monotonicity of
+                                       booking counters;
+                                       DriftBacking + closeDriftReserveBacked
+                                       predicate + fail-closed
+                                       continuationDecision; cure-and-cancel
+                                       irreversibility precondition;
+                                       finalize requires adlApplied and
+                                       zero residual; WeightAttribution
+                                       enforces 0 < backing by typing;
+                                       does_not_touch_pendingObligation
+                                       lemmas for every non-credit
+                                       transition. Closes §14 #46, #47,
+                                       #66, #67, #69, #70, #71, #72, #73.
+
+Phase 5 cluster 5 — recovery + activation:
+  Percolator/Activation.lean         — InsuranceReservation + lien helper
+                                       with matching lienCreatable predicate;
+                                       BackingBucket.lienCreatable bridge to
+                                       lienAgainst; HealthProof / UIAggregate /
+                                       AccountHealthWitness type split;
+                                       ActivationEnvelope record;
+                                       AssetSlotState + isReconciledZero;
+                                       Activate transition relation with
+                                       envelope/zero-state/epoch-bump witness;
+                                       HealthCert.validIn with epoch-bump
+                                       invalidation. Closes §14 #29, #58, #59,
+                                       #60, #61.
+  Percolator/RecoveryFallback.lean   — envelopeValid predicate
+                                       (abs(P_fb - P_ref)*10000 ≤ devBps*P_ref);
+                                       per-leg + per-account
+                                       legTransferBound / accountTransferBound
+                                       ceiling-divs; FallbackPriceInput with
+                                       accepted predicate and fail-closed
+                                       conditionalPayout. Closes §14 #80,
+                                       #81, #82.
+
+Phase 5 cluster 2 — token-value-flow soundness (named constructors):
+  Percolator/ValueFlowSoundness.lean — lienCreateFlow (empty),
+                                       internalTransferFlow, insuranceToCloseSpentFlow,
+                                       recoveryInsurancePayoutFlow.
+                                       Closes §14 #4, #25, #26 (structural row form),
+                                       #27. The conservation-over-history
+                                       §14 #13 and #14 require a sequence-of-flows
+                                       model — deferred to a future cluster.
 
 Refinement proptests (tests/proofs_v16_lean_refinement.rs) bridge each Phase 1
 Lean theorem to the production Rust impl:
@@ -150,6 +284,294 @@ Phase 3 §14 closures by pure-function theorems:
       The per-domain arithmetic (CreditRate.lean) plus the ledger query
       (SourceCreditAvailable.lean) together fully discharge the formula
       half of this invariant.
+
+Phase 5 cluster 1 §14 closures (lien lifecycle):
+
+  #19 insurance_backed_lien_consume_release_impair_conserves_canonical_ledger
+  #30 insurance_backed_lien_create_consume_release_impair_conserves_canonical_ledger
+      Closed (single-lien half) by `LienLifecycle.lean::impair_conserves_totalFace`
+      and `consume_totalFace_decrement`. Aggregate-level conservation
+      (across multiple liens) is a sum of per-lien instances.
+  #21 impaired_insurance_lien_remains_reserved_and_unavailable_until_reconciled
+  #31 insurance_impaired_lien_remains_encumbered_until_release_or_consume
+      Closed by `impair_preserves_backing` and `impair_grows_impaired`:
+      `backingReservedNum` is unchanged by impair (the lien stays
+      encumbered) and `impairedFaceClaimNum` strictly grows.
+  #32 lien_creation_increments_correct_aggregate_for_backing_source
+      Closed by `create_targets_named_source_only` + `_insurance_leaves_counterparty`
+      (structural type-level witness) and `create_faceClaim_increments` +
+      `create_backing_increments` (arithmetic witness).
+  #37 lien_consumption_decrements_bucket_valid_liened_and_source_valid_liened_once
+      Closed by `consume_faceClaim_decrements` and `consume_backing_decrements`
+      — the "once per side" property follows from each being a `Lien src`
+      field, with `src` fixed at the call site.
+  #39 lien_release_moves_valid_liened_to_fresh_unliened_without_changing_fresh_reserved
+      Closed by `release_eq_consume` + `release_does_not_impair`: the
+      per-lien field updates match consume; the impaired bucket is
+      untouched (the released face truly leaves the system rather than
+      being marked impaired).
+
+Phase 5 cluster 2 §14 closures (token-value-flow soundness):
+
+  #4  source_credit_lien_creation_moves_no_quote_value
+      Closed by `ValueFlowSoundness.lean::lienCreateFlow_no_value`:
+      `lienCreateFlow` is `TokenValueFlow.empty` — zero rows, zero
+      debits, zero credits.
+  #25 token_value_flow_proof_balances_internal_insurance_transfers
+      Closed by `internalTransferFlow_balanced` + specialized
+      `insuranceToCloseSpentFlow_balanced`: total_debit = total_credit,
+      both external-quote counters zero, vault unchanged.
+  #26 internal_insurance_transfer_requires_exactly_one_credit_entry
+      Closed by `TokenValueRow.creditFor_own_class` /
+      `creditFor_other_class`: each row's `creditFor` is `amount` for
+      `r.creditClass` and `0` for every other class — structural by row
+      typing.
+  #27 recovery_consumed_insurance_lien_decrements_v_on_external_payout
+      Closed by `recoveryInsurancePayoutFlow_vault_decrements` +
+      `_shape` + `_balanced`: vault decreases by exactly the payout
+      amount, the row debits InsuranceCapital and credits ExternalQuote,
+      and the flow is structurally balanced.
+
+Phase 5 cluster 6 §14 closures (conservation and reconciliation):
+
+  #5  stock_reconciliation_holds_at_genesis_activation_mode_transition_and_recovery
+      Closed by `StockReconciliation.lean::reconciled` predicate
+      (V = totalV) and `empty_reconciled` (genesis case). The
+      reconciliation check is decidable at any state; downstream
+      transitions just need to preserve the equality.
+  #13 insurance_credit_reservation_globally_conserved
+      Closed by `InsuranceLedger.lean::conservation_holds` plus the
+      `*_preserves_conservation` triple for reserve/release/consume,
+      together with `applySeq_preserves_conservation` for arbitrary
+      transition sequences. The structural `conservation` field on
+      the `InsuranceLedger` record carries the proof through every
+      transition by construction.
+  #14 insurance_spend_not_double_counted_as_live_encumbrance
+      Closed by `InsuranceLedger.lean::consume_atomic_decrement_and_spend`
+      (consume reduces reservation by the same amount it adds to
+      spent in one atomic step) plus `release_preserves_domainSpent`
+      and `reserve_preserves_domainSpent` (the other transitions
+      never touch the spend counter). The same atom cannot be both
+      live-reserved and spent.
+  #75 B_booking_exact_remainder_conservation
+      Closed by `BBookingExact.lean::bBookingStep_exact_conservation`
+      (delta_B * W + new_R = chunk * SOCIAL_LOSS_DEN + R) and
+      `bBookingStep_remainder_lt_W` (new_R < W).
+      `bBookingRec_conservation` lifts the per-step identity to an
+      arbitrary chunk sequence: total booked + final remainder =
+      initial remainder + sum of scaled chunks. No social-loss atom
+      is silently created or destroyed across any number of chunks.
+  #95 settlement_rounding_residue_credits_unallocated_surplus_and_flow_proof_balances
+      Closed by `StockReconciliation.lean::RoundingSplit` with the
+      `conservative : allocations.sum ≤ exactAmount` proof field and
+      the `flow_balances` theorem (residue + allocations.sum =
+      exactAmount). The `ResidueSink` choice (settlementRoundingResidue
+      vs unallocatedProtocolSurplus) plus `applyResidue` route the
+      residue into one of the two protocol-owned classes.
+  #96 rounding_residue_never_used_for_health_backing_insurance_or_payout
+      Closed by `StockReconciliation.lean::HealthBackingPayoutWitness`:
+      the `fromUserClaim` constructor requires a role proof
+      `h : role = .userClaim`. The residue and surplus classes are
+      tagged `.protocolOwned`, and `residue_role_not_userClaim` /
+      `surplus_role_not_userClaim` prove these tags are not equal —
+      so no `HealthBackingPayoutWitness` value can be constructed
+      from a residue or surplus amount. The §14 #96 exception (an
+      explicit balanced transition) is modeled by the
+      `ExplicitResidueTransfer` structure.
+  #97 stock_reconciliation_includes_settlement_rounding_residue_total
+      Closed by `StockReconciliation.lean::reconciled_includes_residue`
+      (residue ≤ V whenever the partition reconciles) plus
+      `residue_from_V` (explicit decomposition with the residue
+      called out). `settlementRoundingResidue` is one of the 10
+      classes summed by `totalV`.
+  #98 funded_close_drift_reserve_maps_to_one_stock_or_reservation_class
+      Closed by `StockReconciliation.lean::DriftReserveMapping`: the
+      `cls` field is a single `DriftReserveBackingClass` enum value,
+      so a mapping cannot carry two classes. `single_class` is the
+      explicit ∃! witness. `tokenStockContribution` returns the
+      mapping amount only for `.quoteEscrow`; the other four backing
+      classes return zero token-stock contribution
+      (`tokenStockContribution_nonQuote`), preventing double-counting
+      between reservation/capacity ledgers and stock classes.
+  #99 per_class_stock_reconciliation_matches_o1_ledgers_where_available
+      Closed by `StockReconciliation.lean::matchesLedgers` predicate
+      and the per-class projection lemmas
+      (`matchesLedgers_insurance`, `_cancelDepositEscrow`,
+      `_roundingResidue`). `empty_matchesLedgers` covers the genesis
+      case.
+
+Phase 5 cluster 4 §14 closures (close progress and priority):
+
+  #46 close_drift_reserve_has_backed_loss_capacity_or_recovers
+      Closed by `CloseLedger.lean::closeDriftReserveBacked` predicate
+      and `continuationDecision` + `unbacked_routes_to_recovery`: a
+      close continuation is admitted iff the drift reserve is bounded
+      by the total of eligible support, domain insurance,
+      source-credit lien backing, B-booking headroom, and
+      deterministic recovery capacity; otherwise the decision returns
+      `false`, forcing recovery routing.
+  #47 pulled_forward_obligation_credit_not_socialized_again
+      Closed by `CloseLedger.lean::bookPendingObligation_credit_matches_debit`
+      (atomic debit-equals-credit) plus the
+      `bookX_does_not_touch_pendingObligation` family showing no
+      other transition path increments the credit counter. The same
+      credit cannot be added twice because exactly one transition
+      touches the field.
+  #66 participant_finalization_pulls_forward_pending_obligation
+      Closed by `CloseLedger.lean::bookPendingObligation_only_credit_path`
+      (the only path that credits pending obligations) together with
+      the `does_not_touch_pendingObligation` family for `bookSupport`,
+      `bookInsurance`, `bookB`, `bookExplicit`, and `addDrift`.
+      Pending obligations must be pulled forward through the dedicated
+      transition — there is no shortcut.
+  #67 phantom_weight_without_backing_reverts
+      Closed by `CloseLedger.lean::WeightAttribution`. The structure
+      requires `0 < backing` as a typed field; any expression that
+      tries to construct an attribution with `backing = 0` fails to
+      typecheck (`weight_attribution_has_positive_backing` is the
+      explicit witness).
+  #69 preempted_close_restart_cannot_double_book_residual
+      Closed by `CloseLedger.lean::bookSupport_monotone_supportConsumed`
+      and siblings for `insuranceSpent`, `bLossBooked`,
+      `explicitLossAssigned`. Booking counters are monotonically
+      non-decreasing across all transitions; restart cannot reset
+      them to zero, so prior bookings cannot be silently repeated.
+  #70 close_id_and_drift_anchors_immutable
+      Closed by `CloseLedger.lean::anchorsEq` plus the
+      `_preserves_anchors` theorems for every transition
+      (bookSupport, bookInsurance, bookB, bookExplicit,
+      bookPendingObligation, addDrift, applyQuantityAdl, finalize,
+      cureAndCancel). The 7-field anchor block — closeId, assetIndex,
+      marketId, domainSide, grossLossAtCloseStart,
+      driftReferenceSlot, maxCloseSlot — is preserved by every
+      lifecycle step.
+  #71 bankrupt_close_progress_decreases_net_of_close_drift
+      Closed by `CloseLedger.lean::bookSupport_decreases_residual`
+      and siblings: every positive-amount booking strictly decreases
+      `residualRemaining`. The dual `addDrift_increases_residual`
+      witnesses the net direction — booking offsets drift atomically
+      within the same transition.
+  #72 cure_and_cancel_checks_before_consuming_new_deposit
+      Closed by `CloseLedger.lean::cureAndCancel_requires_no_irreversible`
+      (cure-and-cancel demands `hasIrreversibleProgress = false`)
+      together with `bookSupport_sets_irreversible` (a successful
+      positive booking sets `hasIrreversibleProgress = true`). After
+      any booking, cancel is denied; new deposits cannot be consumed
+      as support before the cancel check.
+  #73 quantity_adl_and_account_finalization_atomic_or_barriered
+      Closed by `CloseLedger.lean::finalize_requires_adlApplied`
+      (finalize requires `adlApplied = true`) and
+      `finalize_requires_zero_residual` (finalize requires residual
+      booked to zero). ADL is its own one-shot transition
+      (`applyQuantityAdl`) that flips the flag; finalize cannot fire
+      before ADL has applied.
+  #68 preemptive_close_priority_prevents_hold_and_wait_deadlock
+      Closed by `ClosePriority.lean::no_two_cycle` and
+      `no_three_cycle`, derived from `lt_asymm` and `lt_trans`. A
+      strict total order has no cycles; no two closes can hold and
+      wait on each other.
+  #92 cross_close_priority_is_strict_total_order
+      Closed by `ClosePriority.lean::lt_irrefl` + `lt_asymm` +
+      `lt_trans` + `lt_trichotomy`. The priority comparator is a
+      strict total order: irreflexive, asymmetric, transitive, and
+      every pair of priorities is comparable (or equal as tuples).
+  #93 equal_priority_livelock_impossible
+      Closed by `ClosePriority.lean::distinct_closeId_strictly_comparable`:
+      two closes with distinct `closeId` always have comparable
+      priority (one strictly precedes the other). Combined with the
+      spec rule that distinct closes have distinct closeIds,
+      equal-priority livelock is impossible by construction.
+
+Phase 5 cluster 5 §14 closures (recovery + activation):
+
+  #29 lien_creatable_matches_actual_bucket_and_insurance_lifecycle_helpers
+      Closed by `Activation.lean::InsuranceReservation.lien_isSome_iff_lienCreatable`
+      and `BackingBucket.lienAgainst_isSome_iff_lienCreatable`: the
+      "is a new lien creatable?" predicate is exactly the precondition
+      under which the per-source lifecycle helper succeeds.
+  #58 cross_instance_ui_aggregation_not_health_or_collateral_proof
+      Closed by `Activation.lean::AccountHealthWitness`: a witness of
+      account health can only be constructed from a `HealthProof` (the
+      in-instance proof type). `UIAggregate` is a separate, distinct
+      type with no path into `AccountHealthWitness`. The §14 #58
+      structural distinction is closed at the type level — analogous to
+      the §14 #87 closure pattern.
+  #59 mutable_asset_activation_requires_full_envelope_proofs
+      Closed by `Activation.lean::Activate.requires_full_envelope` plus
+      the per-component witnesses `requires_priceOK` and
+      `requires_recoveryFallbackOK`. The `ActivationEnvelope` record
+      tags every envelope check (fee, price, funding, margin, OI,
+      B-headroom, source-credit, close-progress, portfolio, recovery
+      fallback); `Activate` cannot fire without `env.allValid = true`.
+  #60 asset_cannot_activate_with_nonzero_or_unreconciled_state
+      Closed by `Activation.lean::Activate.requires_zero_state` plus
+      per-field corollaries (`requires_zero_legCount` /
+      `_lienCount` / `_pendingObligationCount` /
+      `_activeCloseCount` / `_backingHeldNum` /
+      `_insuranceReservedNum`). The `Activate` constructor refuses to
+      step from a non-`isReconciledZero` state.
+  #61 activation_invalidates_or_scopes_certs_fail_closed
+      Closed by `Activation.lean::activation_invalidates_priorEpoch_cert`
+      and `activation_postCert_implies_bumped_epoch`. Certs are scoped
+      to `(slot, epoch)`. Activation bumps the slot's epoch by 1
+      (`Activate.bumps_epoch`); a pre-activation cert can no longer
+      validate, and a post-activation cert must have been bound to the
+      bumped epoch.
+
+Phase 5 cluster 5 §14 closures (recovery fallback envelope):
+
+  #80 recovery_fallback_price_within_configured_deviation_envelope
+      Closed by `RecoveryFallback.lean::envelopeValid` plus
+      `envelopeValid_iff` (explicit-form witness),
+      `envelopeValid_self` (zero-deviation boundary),
+      `envelopeValid_zeroBps_iff_eq` (zero-cap forces price equality),
+      `envelopeValid_mono_in_devBps` (a looser cap accepts strictly
+      more prices). The predicate is exactly
+      `abs(P_fb - P_ref) * 10000 ≤ devBps * P_ref` per `spec.md:213-215`.
+  #81 recovery_fallback_value_transfer_bound_computed_per_account_and_domain
+      Closed by `RecoveryFallback.lean::legTransferBound` (per-leg
+      ceiling-div bound, mirroring `spec.md:222`) plus
+      `accountTransferBound` (sum across legs) and the supporting
+      lemmas `legTransferBound_zero_posQ`,
+      `legTransferBound_zero_deviation`,
+      `legTransferBound_mono_in_posQ`,
+      `accountTransferBound_nil`, `accountTransferBound_cons`,
+      `accountTransferBound_zero_deviation`,
+      `accountTransferBound_le_cons` (monotone in leg list). The
+      per-account bound is the structural sum the engine MUST compute
+      per `spec.md:218-225`.
+  #82 fallback_recovery_rejects_unverified_or_out_of_envelope_reference_price
+      Closed by `RecoveryFallback.lean::unverified_rejected`
+      (unverified reference always rejected),
+      `outOfEnvelope_rejected` (out-of-envelope always rejected), and
+      `conditionalPayout_zero_when_rejected` (rejection forces zero
+      positive payout). Acceptance is the conjunction of verification
+      and envelope-validity; failing either yields no positive junior
+      value.
+
+Phase 5 cluster 3 §14 closures (backing bucket lifecycle):
+
+  #34 backing_bucket_expiry_does_not_underflow_available_backing
+      Closed by `BackingBucket.lean::expire_preserves_available`: the
+      `expire` transition is status-only, so `freshUnliened` (which is
+      `available`) is unchanged.
+  #35 backing_bucket_expiry_does_not_increase_available_backing_or_credit_rate
+      Closed by `expire_does_not_increase_available` (and the stronger
+      `expire_preserves_amounts`). Since `expire` leaves all four amount
+      partitions equal to their pre-transition values, neither the
+      bucket's available nor any downstream rate can increase.
+  #36 backing_bucket_expiry_after_partial_lien_consumption_does_not_inflate_available
+      Closed by `available_after_lien_then_expire`: `lienAgainst`
+      strictly decreases `available`, and the subsequent `expire`
+      preserves it — so the post-expire available is `≤` pre-lien
+      available, never inflated.
+  #40 source_available_backing_recomputes_from_bucket_sums
+      Closed by `sumAvailable_eq_sumFreshUnliened` +
+      `sumAvailable_cons`: the source-level aggregate is structurally
+      the sum of per-bucket `available` values. Transition-side
+      witnesses (`expire_preserves_sumAvailable`,
+      `lienAgainst_decreases_sumAvailable`) show the aggregate tracks
+      per-bucket transitions correctly.
 
 The two axes answer different questions. **Confidence** says whether a harness exists that
 *claims* to prove the invariant. **Strength** says whether the harness is doing symbolic
