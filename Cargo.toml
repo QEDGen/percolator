@@ -13,6 +13,7 @@ bytemuck = { version = "1.23", default-features = false, features = ["derive"] }
 
 [dev-dependencies]
 proptest = "1.4"
+num-bigint = "0.4"
 
 [features]
 default = []

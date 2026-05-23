@@ -39,3 +39,9 @@ desktop.ini
 .env
 .env.local
 test-ledger/
+
+# Lean / Lake (formal_verification/)
+.lake/
+build/
+lakefile.olean
+*.olean
