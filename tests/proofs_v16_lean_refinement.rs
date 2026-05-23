@@ -18,7 +18,10 @@
 //! statements these proptests operationally verify.
 
 use num_bigint::{BigInt, BigUint, Sign};
-use percolator::wide_math::{div_rem_u256, mul_div_floor_u256, I256, U256};
+use percolator::wide_math::{
+    ceil_div_positive_checked, div_rem_u256, floor_div_signed_conservative_i128,
+    mul_div_ceil_u256, mul_div_floor_u256, wide_signed_mul_div_floor, I256, U256,
+};
 use proptest::prelude::*;
 
 // ============================================================================
@@ -257,6 +260,171 @@ proptest! {
             "abs_u256 drift from |x| for v={}",
             v
         );
+    }
+
+    /// **`mul_div_ceil_u256` refinement** at u128-shaped inputs.
+    ///
+    /// `mul_div_ceil_u256(a, b, d)` computes `ceil((a · b) / d)`. We
+    /// restrict to U128-sized inputs so the result fits in U256.
+    /// Diffs against a BigUint spec.
+    ///
+    /// Mirrors the spec identity that ceil-div equals floor-div plus an
+    /// indicator on the remainder — see the Kani harness
+    /// `proof_v16_mul_div_ceil_u256_is_floor_plus_remainder_indicator`
+    /// for the bounded-input symbolic check.
+    #[test]
+    fn mul_div_ceil_u256_matches_biguint_spec_u128_inputs(
+        a: u128,
+        b: u128,
+        d in 1u128..,
+    ) {
+        let a256 = U256::from_u128(a);
+        let b256 = U256::from_u128(b);
+        let d256 = U256::from_u128(d);
+
+        let got = mul_div_ceil_u256(a256, b256, d256);
+        let prod = BigUint::from(a) * BigUint::from(b);
+        let d_bi = BigUint::from(d);
+        let q = &prod / &d_bi;
+        let r = &prod % &d_bi;
+        let spec = if r.bits() == 0 { q.clone() } else { q + 1u32 };
+
+        prop_assert_eq!(
+            u256_to_biguint(got),
+            spec,
+            "mul_div_ceil_u256({}, {}, {}) drift from ceil((a·b)/d)",
+            a,
+            b,
+            d
+        );
+    }
+
+    /// **`ceil_div_positive_checked` refinement** at u256-shaped inputs.
+    ///
+    /// `ceil_div_positive_checked(n, d)` computes `ceil(n / d)` for
+    /// non-zero `d`. Diffs against a BigUint spec.
+    #[test]
+    fn ceil_div_positive_checked_matches_biguint_spec(
+        n_lo: u128,
+        n_hi: u128,
+        d_lo: u128,
+        d_hi: u128,
+    ) {
+        prop_assume!(d_lo != 0 || d_hi != 0);
+        let n = U256::new(n_lo, n_hi);
+        let d = U256::new(d_lo, d_hi);
+
+        let got = ceil_div_positive_checked(n, d);
+
+        let n_bi = u256_to_biguint(n);
+        let d_bi = u256_to_biguint(d);
+        let q = &n_bi / &d_bi;
+        let r = &n_bi % &d_bi;
+        let spec = if r.bits() == 0 { q.clone() } else { q + 1u32 };
+
+        // The spec result might overflow U256 in principle, but only if
+        // `n` is at U256::MAX *and* `n % d != 0` — extremely rare under
+        // proptest sampling and not the focus of this bridge. We assume
+        // the result fits and compare.
+        if spec.bits() <= 256 {
+            prop_assert_eq!(
+                u256_to_biguint(got),
+                spec,
+                "ceil_div_positive_checked drift from ceil(n/d)"
+            );
+        }
+    }
+
+    /// **`floor_div_signed_conservative_i128` refinement**.
+    ///
+    /// For arbitrary signed `n` and positive `d`, the conservative-floor
+    /// rule rounds toward negative infinity: trunc for `n ≥ 0`, otherwise
+    /// `-(|n| / d + (1 if |n| % d != 0 else 0))`. Diffs against a BigInt
+    /// reference.
+    ///
+    /// The same identity is exercised at bounded inputs in
+    /// `proof_v16_floor_div_signed_conservative_matches_small_reference`
+    /// (Kani arithmetic suite).
+    #[test]
+    fn floor_div_signed_conservative_i128_matches_bigint_spec(
+        n: i128,
+        d in 1u128..,
+    ) {
+        let got = floor_div_signed_conservative_i128(n, d);
+
+        let n_bi = BigInt::from(n);
+        let d_bi = BigInt::from(d);
+
+        // BigInt's div/rem rounds toward zero. Convert to floor division by
+        // hand: if n < 0 and n % d != 0, subtract 1 from the truncated q.
+        let q_trunc = &n_bi / &d_bi;
+        let r = &n_bi % &d_bi;
+        let spec = if n_bi.sign() == Sign::Minus && r.sign() != Sign::NoSign {
+            q_trunc - 1u32
+        } else {
+            q_trunc
+        };
+
+        prop_assert_eq!(
+            BigInt::from(got),
+            spec,
+            "floor_div_signed_conservative_i128({}, {}) drift",
+            n,
+            d
+        );
+    }
+
+    /// **`wide_signed_mul_div_floor` refinement** at u128-shaped basis +
+    /// i128-shaped k_diff inputs.
+    ///
+    /// Computes `floor_div_signed_conservative(abs_basis * k_diff,
+    /// denominator)` using a U512 intermediate to handle the wide product.
+    /// Diffs against a BigInt reference.
+    ///
+    /// The Rust impl is the K/F PnL-delta kernel; the Lean spec lives
+    /// across `wide_math.rs` reasoning, with the wide-product half
+    /// resting on `wideningMulU128_correct`.
+    #[test]
+    fn wide_signed_mul_div_floor_matches_bigint_spec(
+        abs_basis: u128,
+        k_diff_i128: i128,
+        denominator in 1u128..,
+    ) {
+        // wide_signed_mul_div_floor panics on k_diff == I256::MIN; the
+        // `from_i128` lift cannot reach that value, so we are safe.
+        let abs_basis_u256 = U256::from_u128(abs_basis);
+        let k_diff = I256::from_i128(k_diff_i128);
+        let den_u256 = U256::from_u128(denominator);
+
+        let got = wide_signed_mul_div_floor(abs_basis_u256, k_diff, den_u256);
+
+        let abs_basis_bi = BigInt::from(abs_basis);
+        let k_diff_bi = BigInt::from(k_diff_i128);
+        let den_bi = BigInt::from(denominator);
+        let prod = abs_basis_bi * k_diff_bi;
+        // Floor toward -inf
+        let q_trunc = &prod / &den_bi;
+        let r = &prod % &den_bi;
+        let spec = if prod.sign() == Sign::Minus && r.sign() != Sign::NoSign {
+            q_trunc - 1u32
+        } else {
+            q_trunc
+        };
+
+        // The result must fit in I256 (caller contract). Under random
+        // sampling this is virtually always true.
+        let i256_min_bi: BigInt = -(BigInt::from(1u8) << 255u32);
+        let i256_max_bi: BigInt = (BigInt::from(1u8) << 255u32) - 1u32;
+        if spec >= i256_min_bi && spec <= i256_max_bi {
+            prop_assert_eq!(
+                i256_to_bigint(got),
+                spec,
+                "wide_signed_mul_div_floor({}, {}, {}) drift from floor((basis·k_diff)/d)",
+                abs_basis,
+                k_diff_i128,
+                denominator
+            );
+        }
     }
 
     /// **`I256::checked_mul_i256` refinement**: matches BigInt multiplication

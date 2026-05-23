@@ -116,6 +116,162 @@ Phase 5 cluster 3 — backing bucket lifecycle:
                                        (sumAvailable / sumFreshUnliened).
                                        Closes §14 #34, #35, #36, #40.
 
+Spec14Aliases2.lean + focused modules — additional MEDIUM/LOW rows
+closed by citing existing infrastructure or small new structures:
+  Percolator/Spec14Aliases2.lean      — named theorems citing Phase 5
+                                       infrastructure for §14 #11
+                                       (backing is Nat amount not
+                                       certificate), #16 (single
+                                       canonical writer via
+                                       InsuranceLedger transitions),
+                                       #20 (consume atomic decrement
+                                       + spend), #33 (lien creatable
+                                       matches lifecycle), #38
+                                       (consumption removes from
+                                       validLiened), #51 (no
+                                       circular credit), #56
+                                       (residual to single domain),
+                                       #84 (dead-leg books to named
+                                       domain), #86 (UIAggregate
+                                       can't witness health), #88
+                                       (N too large fails activation
+                                       envelope), #90 (penalty fields
+                                       disjoint by typing). Closes
+                                       11 invariants by re-cite.
+  Percolator/NoPayoutCredit.lean      — PayoutFromCredit structure
+                                       whose payoutAmount is bounded
+                                       by lienBackedAmount only;
+                                       soft credit yields zero
+                                       payout when there is no lien.
+                                       FeeResolution with
+                                       uncollectible portion routed
+                                       through applyForgiveness
+                                       (no-op on StockClasses) —
+                                       uncollectible fees forgiven,
+                                       never socialized. Closes §14
+                                       #52, #77.
+  Percolator/ZeroWeightClear.lean     — ZeroWeightClearance closed
+                                       sum (insurance or
+                                       explicitBacked only); no
+                                       bBookB constructor. apply
+                                       routes through bookInsurance
+                                       or bookExplicit, both of
+                                       which require backing. Closes
+                                       §14 #76.
+  Percolator/HedgeEnvelope.lean       — HedgeBucket with hedgeCredit
+                                       = min(hedgedSize,
+                                       envelopeCap); structural
+                                       bounds in both directions;
+                                       monotonicity in raw
+                                       requirement. Closes §14 #91.
+
+Heavy overclaim hardening — HIGH+WEAK rows needing typed witnesses
+or transition state machines:
+  Percolator/RiskIncreasingTrade.lean — TradeStep closed sum with
+                                       riskDecreasing, riskIncreasing
+                                       (carrying Lien Counterparty
+                                       with 0 < backing proof field),
+                                       riskIncreasingInsurance
+                                       symmetric. Risk-increasing
+                                       trade cannot be constructed
+                                       without backing — structural
+                                       witness. consumedBacking +
+                                       zero_consumed_implies_riskDecreasing
+                                       give the precise classification.
+                                       Closes §14 #8.
+  Percolator/HealthTest.lean          — HealthInputs record splitting
+                                       positive vs negative equity;
+                                       pendingObligationExposure
+                                       appears in negativeEquity once.
+                                       equity_decreases_by_pending_increment
+                                       (linear with coefficient one);
+                                       positiveEquity_independent_of_pending
+                                       (no appearance elsewhere);
+                                       double_counted_strict_increase
+                                       contrast lemma. Closes §14 #89.
+  Percolator/KFSettlement.lean        — kfSettlementStep atomic
+                                       transition consuming backing
+                                       and locking face claim in a
+                                       single return; the atomic
+                                       theorem combines both
+                                       per-field witnesses; total
+                                       conserved (backing + locked).
+                                       Closes §14 #53.
+  Percolator/BackingConsumption.lean  — VaultSnapshot with senior
+                                       invariant vault = loserCapital
+                                       + winnerCapital + bookedLoss;
+                                       consumeBacking transition
+                                       moves loser capital into
+                                       bookedLoss one-for-one with
+                                       vault preserved; the senior
+                                       invariant is preserved by
+                                       construction. Closes §14 #55.
+  Percolator/ImpairmentRouting.lean   — AccountWithLiens record with
+                                       hasImpairedLien flag; normalStep
+                                       refuses to fire when impaired
+                                       and unresolved; routeDeleverage
+                                       / routeLiquidation /
+                                       routeRecovery are the only
+                                       three paths that clear the
+                                       flag, each recording its
+                                       resolution tag. closed-world
+                                       routing witness shows every
+                                       resolved account names one
+                                       of the three routes. Closes
+                                       §14 #10.
+
+Operational overclaim hardening — HIGH+WEAK rows requiring new
+structures rather than name-only re-exports:
+  Percolator/LiveBacking.lean         — BackingBucket.liveAvailable
+                                       (Fresh-only contribution) plus
+                                       sumLiveAvailable aggregation
+                                       with all-non-Fresh-implies-zero;
+                                       creditRate_zero_when_no_fresh;
+                                       expireAndImpairAll atomic
+                                       transition draining
+                                       validLiened into impairedLiened
+                                       with totalBacking preserved.
+                                       Closes §14 #7, #41.
+  Percolator/SoftCredit.lean          — softCredit = faceClaim −
+                                       lockedFaceClaim; the no-double-
+                                       count identity
+                                       softCredit_plus_locked_eq_face
+                                       under well-formed lock budget;
+                                       monotonicity in lock; bounded
+                                       sum even in the degenerate
+                                       over-lock case. Closes §14 #44.
+  Percolator/DomainLock.lean          — DomainLock with per-side
+                                       blocking; kfAccrueAssetWide
+                                       takes no DomainLock argument
+                                       (independence by typing); the
+                                       sharpening lemma
+                                       sideStep_blocked_when_locked
+                                       contrasts side-specific ops.
+                                       Closes §14 #74.
+  Percolator/DeadLegForfeit.lean      — DeadLegOutcome closed sum
+                                       (zeroPositive vs
+                                       boundedFallback with carried
+                                       FallbackPriceInput.accepted
+                                       proof); positivePayout_zero
+                                       on both constructors;
+                                       no_unverified_constructor
+                                       witness; envelope deviation
+                                       relayed through
+                                       boundedFallback_envelope_holds.
+                                       Closes §14 #83.
+
+Overclaim hardening — HIGH+WEAK rows promoted to named Lean theorems:
+  Percolator/Spec14Aliases.lean — named theorems citing the
+                                       Phase 5 infrastructure for §14
+                                       rows where the spec name fit
+                                       a Kani harness only at
+                                       concrete inputs. Each theorem
+                                       is a short cite or a
+                                       structural witness over the
+                                       existing transition relations.
+                                       Closes §14 #9, #18, #24, #28,
+                                       #43, #64.
+
 Phase 5 cluster 6 — conservation and reconciliation:
   Percolator/BBookingExact.lean      — bBookingStep (single-step
                                        residual booking arithmetic);
@@ -332,6 +488,361 @@ Phase 5 cluster 2 §14 closures (token-value-flow soundness):
       amount, the row debits InsuranceCapital and credits ExternalQuote,
       and the flow is structurally balanced.
 
+Final batch §14 closures (MEDIUM/LOW rows):
+
+  #11 backing_reservation_is_actual_locked_equity_not_optimistic_certificate
+      Closed by `ActualBacking.lean::AccountCapital.lockEquity` plus
+      `lockEquity_conservation` (post-capital + lien.backing =
+      pre-capital exactly), `lockEquity_lien_backing_eq_amount`,
+      `lockEquity_decreases_capital`, and
+      `positive_lien_implies_capital_decrement`. A positive-backed
+      lien provably corresponds to a capital decrement of the same
+      amount — no "optimistic certificate" path can produce backing
+      without consuming equity. *(Supersedes the prior tautological
+      `Spec14Aliases2.lean::Lien.backingReservedNum_is_actual_amount`
+      — see AUDIT_2026-05-22.md.)*
+  #16 source_credit_insurance_reservation_single_canonical_writer
+      Closed by `Spec14Aliases2.lean::InsuranceLedger.transitions_are_only_writers`:
+      the three lifecycle helpers are the only paths that produce a
+      valid `InsuranceLedger` with the conservation proof.
+      Strengthened by
+      `SingleWriterInsurance.lean::InsuranceLedger.InsuranceWrite`,
+      a closed sum with exactly three constructors (Reserve /
+      Release / Consume), plus `applyWrite` as the typed single
+      entry point. `tag_is_one_of_three` is the closed-world
+      witness — every `InsuranceWrite` value provably maps to one
+      of the three named writers. The routing-equivalence theorems
+      `applyWrite_Reserve` / `_Release` / `_Consume` show
+      `applyWrite` is *definitionally* the named transition (no
+      hidden path). `applyWrite_some_iff_named_transition` proves
+      every successful call factors through one of the three.
+      `applyWrite_preserves_initialDeposited` and
+      `applyWrite_preserves_globalProtocolStaged` use the
+      closed-sum exhaustiveness to prove that no constructor can
+      mutate these anchor fields — "no other writer" is now
+      structural at the typed entry point. *(Strengthened from
+      "the three conserve" to "the three are the only writers" —
+      see AUDIT_2026-05-22.md.)*
+  #20 insurance_backed_lien_consumption_decrements_source_credit_reservation_and_total_available_once
+      Strengthened by `MoreStrengthening.lean::InsuranceLedger.consumeWithSpendAtoms`
+      and its `consumeWithSpendAtoms_atomic` /
+      `_spend_correct` theorems. The `spendAtomsFor` helper exposes
+      the spec's BOUND-unit ↔ vault-atom conversion
+      (`amount_from_bound_num_up`) that was collapsed in the prior
+      closure. The total-available decrement in vault atoms is now
+      explicit: `amount ≤ spendAtoms * BOUND_SCALE`, conservative
+      per `BoundArith.amountFromBoundNum_rounds_up`. The
+      `Spec14Aliases2` direct re-citation remains for the BOUND-only
+      half. *(Strengthened to add the spec's two-scale distinction —
+      see AUDIT_2026-05-22.md.)*
+  #33 lien_creatable_predicate_matches_actual_bucket_or_insurance_lifecycle
+      Closed by `Spec14Aliases2.lean::BackingBucket.lien_creatable_matches_lifecycle`
+      and `InsuranceReservation.lien_creatable_matches_lifecycle`,
+      re-citing the cluster 5 iff theorems.
+  #38 lien_consumption_removes_backing_from_fresh_reserved_and_claim_bound
+      Closed by `StrengthenedClosures.lean::lien_consumption_removes_fresh_reserved_and_claim_bound`:
+      the joint theorem witnesses both halves —
+      `b'.validLiened + amount = b.validLiened` (fresh-reserved
+      side) and `l'.faceClaimLockedNum + face = l.faceClaimLockedNum`
+      (claim-bound side). The supporting
+      `BackingBucket.consumeLien_decreases_fresh_reserved_total`
+      explicitly handles the bucket's `freshUnliened + validLiened`
+      sum. *(Strengthened from
+      `Spec14Aliases2.lean::BackingBucket.consumeLien_removes_from_validLiened`
+      which only proved the bucket side — see AUDIT_2026-05-22.md.)*
+  #51 no_circular_credit_without_external_senior_backing
+      Closed by `Spec14Aliases2.lean::TradeStep.no_circular_credit_without_backing`
+      and `risk_increasing_consumes_backing` — by typing, a risk-
+      increasing trade cannot fire without consuming positive
+      backing. Strengthened by
+      `CreditAcyclicity.lean::CreditChain`, an *indexed* inductive
+      whose index is the list of accounts in the chain. Two
+      constructors: `external` anchors a chain at an
+      `ExternalBacking` (with `positive : 0 < amount`); `extend`
+      prepends a new account with a `notIn : ¬ a ∈ prev` proof
+      field. The proof field rules out A → B → ... → A cycles at
+      the type level — no `CreditChain` whose index has a
+      duplicate can be constructed. `accounts_nodup` is the
+      Nodup witness; `anchor_positive` proves every chain
+      bottoms out at a strictly-positive external source;
+      `extend_preserves_anchor` shows the senior backing is
+      stable across extensions. *(Strengthened from "requires
+      backing at each step" to "no cycle is representable" —
+      see AUDIT_2026-05-22.md.)*
+  #52 soft_maintenance_credit_does_not_create_payout_or_residual_cure
+      Closed by `EvenMoreStrengthening.lean::AccountCapital.attemptPayout`
+      — the engine-action binding the audit asked for. Theorems:
+      `attemptPayout_none_when_only_soft_credit` (lien-backed = 0
+      → no payout), `attemptPayout_some_implies_lien_backed`
+      (successful payout proves lien-backed > 0), and
+      `attemptPayout_capital_decrement` (capital decrement bounded
+      by lien-backed, never by softCreditAmount). Plus the prior
+      `NoPayoutCredit.lean::PayoutFromCredit` structural invariant
+      bounding payoutAmount ≤ lienBackedAmount. *(Strengthened with
+      an engine action so the bound has observable consequences —
+      see AUDIT_2026-05-22.md.)*
+  #56 residuals_charged_only_to_asset_opposing_side_domain
+      Closed by `OpposingDomain.lean::CloseLedger.openFromLoss` plus
+      `openFromLoss_targets_opposing_side` (domainSide = originSide.flip),
+      `openFromLoss_long_targets_short` / `_short_targets_long` (the
+      two concrete directions), `openFromLoss_domain_distinct_from_origin`
+      (provably *not* the originating side), and
+      `openFromLoss_same_asset` (no unrelated-asset booking). The
+      cluster 4 anchor-preservation theorems guarantee these
+      properties survive every booking transition. *(Supersedes the
+      prior trivial `Spec14Aliases2.lean::CloseLedger.residual_books_to_single_domain`
+      — see AUDIT_2026-05-22.md.)*
+  #76 zero_weight_domain_residual_cannot_clear_without_backing
+      Closed by `ZeroWeightClear.lean::ZeroWeightClearance` (closed
+      sum: only `insurance` and `explicitBacked` constructors)
+      plus `MoreStrengthening.lean::CloseLedger.bookSupportInWeightedContext`,
+      which wraps `bookSupport` with a `0 < W` proof argument. Under
+      zero weight (W = 0), no such proof exists, so the bookSupport
+      path is structurally inaccessible —
+      `bookSupport_zero_weight_inaccessible` is the explicit
+      witness. `bBookingStep_undefined_at_zero_weight` rules out
+      the B-booking shortcut symmetrically. *(Strengthened to close
+      the bookSupport bypass — see AUDIT_2026-05-22.md.)*
+  #77 uncollectible_fees_forgiven_not_socialized
+      Closed by `NoPayoutCredit.lean::FeeResolution` plus the
+      contrast pair: `applyForgiveness` (the spec-mandated path)
+      preserves every StockClasses field including `insurance` and
+      `totalV`, while the counterfactual `socializeIntoInsurance`
+      strictly grows both. The distinguishability theorem
+      `forgive_distinct_from_socialize` proves the two functions
+      produce different outputs whenever the uncollectible portion
+      is positive — `applyForgiveness` is therefore a *real* choice
+      with observable consequences, not a no-op stub. *(Strengthened
+      from the prior identity-only model — see AUDIT_2026-05-22.md.)*
+  #84 dead_leg_forfeit_books_to_bankruptcy_domain
+      Closed by `OpposingDomain.lean::CloseLedger.deadLegForfeit_books_to_opposing_side`:
+      a close ledger opened via `openFromLoss` on a dead-leg
+      origin carries `domainSide ≠ originSide` and the same
+      `assetIndex` — i.e., residuals land in the bankruptcy
+      domain (opposing side of the same asset). The cluster 4
+      anchor-preservation theorems carry this through every
+      subsequent booking transition. *(Supersedes the prior weaker
+      `Spec14Aliases2.lean::CloseLedger.bookB_targets_named_domain`
+      / `_bookExplicit_targets_named_domain`, which only proved
+      preservation of the anchor not its semantic correctness —
+      see AUDIT_2026-05-22.md.)*
+  #86 global_accumulator_not_account_health_proof
+      Closed by `Spec14Aliases2.lean::AccountHealthWitness.requires_in_instance_proof`,
+      re-citing the §14 #58 closure: a health witness can only be
+      constructed from a `HealthProof`, not a `UIAggregate`.
+      Strengthened by `MultiInstanceAggregation.lean::GlobalAccumulator`,
+      which gives the "global accumulator" explicit multi-instance
+      content (`instances` list, `totalNotional` Nat) distinct
+      from a per-account proof. `fromSnapshots_instances` and
+      `fromSnapshots_totalNotional` are the structural-content
+      witnesses. `MultiInstanceView.builtFrom` is the proof field
+      tying the aggregator to the snapshots it summed over. *(Strengthened
+      from re-cite to a typed object with multi-instance content —
+      see AUDIT_2026-05-22.md.)*
+  #88 N_too_large_rejects_public_initialization_or_activation
+      Closed by `MoreStrengthening.lean::Activate.rejects_when_N_too_large`,
+      which composes `ActivationEnvelope.portfolioOKFromN_false_when_too_large`
+      (N > MAX_PORTFOLIO_ASSETS_N → portfolioOK = false) with the
+      `Spec14Aliases2.lean::Activate.rejects_when_portfolio_envelope_fails`
+      rejection witness. The link between the candidate `N` and the
+      envelope flag is now explicit, not abstract. *(Strengthened
+      from the abstract-flag closure — see AUDIT_2026-05-22.md.)*
+  #90 equity_side_penalties_disjoint_from_requirement_side_penalties
+      Closed by `StrengthenedClosures.lean::PenaltySource` (a closed
+      sum of four named sources, each tagged with `category` mapping
+      to `equity` or `requirement`). The disjointness witnesses are
+      `category_total` (every source has *exactly one* category),
+      `category_unique` (no source has two), and
+      `equity_distinct_from_requirement` (the categories themselves
+      are distinct). `negativeEquity_eq_sum_by_category`
+      decomposes the formula by category — equity-side contributions
+      and the requirement contribution sum separately without
+      overlap. *(Strengthened from field-level disjointness to
+      source-level categorization — see AUDIT_2026-05-22.md.)*
+  #91 hedge_credit_reduced_requirement_covers_combined_loss_envelope
+      Closed by `HedgeEnvelope.lean::HedgeBucket.hedgeCredit_le_envelope`
+      (credit bounded by envelope cap) plus
+      `hedgeCredit_le_hedgedSize` (bounded by min-leg). The
+      `reducedRequirement_above_envelope` lemma shows the
+      reduction respects the combined-loss envelope.
+
+Heavy overclaim hardening §14 closures:
+
+  #8  risk_increasing_trade_requires_source_credit_lien
+      Closed by `RiskIncreasingTrade.lean::TradeStep`: the
+      `riskIncreasing` and `riskIncreasingInsurance` constructors
+      require a typed `Lien` plus a structural proof that the
+      lien's `backingReservedNum` is positive. There is no fourth
+      constructor for "risk-increasing without lien", and
+      `zero_consumed_implies_riskDecreasing` proves that any step
+      consuming zero backing must be the riskDecreasing constructor.
+  #10 source_credit_lien_impairment_forces_deleverage_liquidation_or_recovery
+      Closed by `ImpairmentRouting.lean`. `normalStep` returns `none`
+      whenever the account has an unresolved impaired lien
+      (`normalStep_blocked_when_impaired`); only `routeDeleverage`,
+      `routeLiquidation`, or `routeRecovery` can clear the flag
+      (each `_clears_impaired` / `_records_resolution` /
+      `_requires_impaired`). The `resolution_is_one_of_three`
+      closed-world lemma confirms there is no fourth resolution
+      path. Strengthened by
+      `YetMoreStrengthening.lean::AccountWithLiens.WithProgress`,
+      which pairs the account with a progress-counter monoid. Routes
+      strictly advance the counter by 1
+      (`route*_progress_advances`); `normalStep` is the identity on
+      it (`normalStep_progress_unchanged`); under impairment,
+      `normalStep` is blocked
+      (`normalStep_blocked_under_impairment`). The closed-world
+      `strict_progress_from_impairment_implies_route` shows any
+      progress from an impaired-unresolved state must come from one
+      of the three named routes. *(Strengthened from
+      "blocks normal step" to a positive "forces progress only via
+      routes" — see AUDIT_2026-05-22.md.)*
+  #53 settlement_quality_credit_consumes_backing_and_locks_face_claim
+      Closed by `KFSettlement.lean::kfSettlementStep_atomic`: a
+      successful K/F settlement returns a state with backing
+      decremented and face claim locked by the same amount in one
+      atomic call. The `_preserves_total` lemma is the conservation
+      witness; `_fails_closed_underBacked` is the negative form.
+  #55 backing_consumption_reduces_loser_capital_and_preserves_senior_invariants
+      Closed by `BackingConsumption.lean` (3-class vault model) plus
+      `EvenMoreStrengthening.lean::VaultSnapshot.embed` lifting to
+      the full 10-class StockClasses. The senior invariant
+      `vault = loserCapital + winnerCapital + bookedLoss` is
+      preserved by `consumeBacking`
+      (`consumeBacking_preserves_seniorInvariant`); the embedding
+      preserves `totalV` (`embed_totalV_eq_vault`) and
+      reconciliation (`embed_reconciled`). The composite
+      `consumeBacking_embed_preserves_reconciled` lifts the
+      transition's 3-class proof to a 10-class statement.
+      *(Strengthened with the StockClasses embedding the audit
+      asked for — see AUDIT_2026-05-22.md.)*
+  #89 pending_obligation_exposure_counted_exactly_once_in_health_test
+      Closed by `HealthTest.lean::equity_decreases_by_pending_increment`:
+      raising `pendingObligationExposure` by `d` reduces equity by
+      exactly `d`, not `2d`. `positiveEquity_independent_of_pending`
+      shows the term appears only on the negative side, and
+      `double_counted_strict_increase` is the explicit witness that
+      double-counting strictly inflates negative equity beyond the
+      spec formula.
+
+Operational overclaim hardening §14 closures:
+
+  #7  source_credit_rate_zero_when_backing_stale_or_exhausted
+      Closed by `LiveBacking.lean::creditRate_zero_when_no_fresh`:
+      when every backing bucket has status ≠ Fresh (i.e. all are
+      Empty/Expired/Impaired, covering "stale" and "exhausted"),
+      sumLiveAvailable is zero, and the Phase 1
+      `creditRateNum_zero_backing` lemma forces the resulting rate
+      to zero for any positive claim.
+      `creditRate_zero_when_single_stale` is the convenience
+      one-bucket form.
+  #41 expired_liened_bucket_marks_liens_impaired_in_bounded_work
+      Closed by `LiveBacking.lean::expireAndImpairAll`: the single
+      transition flips the bucket status from Fresh to Impaired,
+      drains validLiened into impairedLiened
+      (`expireAndImpairAll_clears_validLiened` /
+      `_grows_impaired`), and preserves totalBacking
+      (`_preserves_totalBacking`). The "bounded work" claim is
+      structural: this is one function call, not a loop. The bridge
+      to #7 is `expireAndImpairAll_excluded_from_live`: the
+      post-transition bucket is no longer counted in
+      `sumLiveAvailable`. Strengthened by
+      `PerLienImpairment.lean`, which adds a `BucketLien` per-lien
+      record (id, amount, status). `expireLiens` flips every Valid
+      lien to Impaired; `expireLiens_all_impaired` is the per-lien
+      witness that no Valid lien survives. The aggregate-bridge
+      theorems `expireLiens_valid_sum_zero` and
+      `expireLiens_impaired_sum_eq` connect the per-lien transition
+      to the bucket-aggregate counts: `validSum` drops to 0;
+      `impairedSum` gains the prior `validSum`.
+      `BucketWithLiens.expireWithLiens` is the lifted pair
+      transition; `_preserves_consistency` proves the per-lien
+      sums and bucket aggregates remain coherent;
+      `_all_liens_impaired` lifts the per-lien witness to the
+      paired state. *(Strengthened from bucket-aggregate-only to
+      per-lien status updates that the audit asked for — see
+      AUDIT_2026-05-22.md.)*
+  #44 locked_face_claim_excluded_from_soft_credit
+      Closed by `SoftCredit.lean::softCredit_plus_locked_eq_face`:
+      under a well-formed lock (`lockedFaceClaim ≤ faceClaim`), the
+      sum of soft-credit and locked-face-claim equals faceClaim
+      exactly. No double-counting is possible. Boundedness and
+      anti-monotonicity (`softCredit_le_faceClaim`,
+      `softCredit_anti_in_locked`) give the supporting
+      structure. Even in the degenerate over-lock case,
+      `softCredit_plus_locked_bounded` holds.
+  #74 domain_lock_does_not_block_asset_wide_kf_accrual
+      Closed by `DomainLock.lean::kfAccrue_ignores_domain_lock`:
+      `kfAccrueAssetWide` literally does not take a `DomainLock`
+      as input, so its result is provably independent of the lock
+      state. `kfAccrue_with_full_lock` is the explicit witness for
+      the maximally-locked case. The contrast lemma
+      `sideStep_blocked_when_locked` shows side-specific ops *are*
+      gated — so this is not a trivial "function never reads input"
+      claim but a deliberate signature design.
+  #83 dead_leg_forfeit_uses_bounded_fallback_or_zero_positive_payout
+      Closed by `DeadLegForfeit.lean::DeadLegOutcome` (a closed
+      sum with two constructors: `zeroPositive` and
+      `boundedFallback input accepted`, the second carrying the
+      `FallbackPriceInput.accepted` proof). Every value of the
+      type falls into one of these two safe categories;
+      `no_unverified_constructor` is the explicit witness. The
+      payout safety is in `positivePayout_zero` (every constructor
+      reports zero positive payout) and
+      `boundedFallback_envelope_holds` (the carried envelope
+      proof relays §14 #80 / #81 / #82).
+
+Overclaim hardening §14 closures:
+
+  #9  source_credit_lien_prevents_double_use_of_same_claim_and_backing
+      Closed by `Spec14Aliases.lean::Lien.consume_prevents_double_use`
+      (consume strictly decrements `backingReservedNum` by the
+      consumed amount) and `consume_remaining_backing` (explicit
+      post-consume remainder = pre − amount). A second consume of
+      the same `amount` requires `backingReservedNum ≥ amount` again,
+      which only holds if the original was `≥ 2 · amount`. The
+      symmetric face-claim version is
+      `consume_face_prevents_double_use`.
+  #18 insurance_backed_lien_creation_increments_valid_liened_insurance_not_counterparty_backing
+      Closed by
+      `Spec14Aliases.lean::SourceCreditLienAggregate.create_insurance_increments_insurance_only`
+      (insurance face-claim += face, counterparty unchanged) plus
+      `create_insurance_backing_increments_insurance_only` (insurance
+      backing += backing, counterparty backing unchanged). Both ride
+      on the cluster 1 type-typed `Lien BackingSource.Insurance`.
+  #24 close_residual_partition_classifies_counterparty_and_insurance_lien_consumption_disjointly
+      Closed by `MoreStrengthening.lean::CloseLedger.consumeLienForResidual`
+      (typed routing on `BackingSource`: counterparty →
+      bookSupport, insurance → bookInsurance) plus
+      `consumeLienForResidual_counterparty_touches_support_only` /
+      `_insurance_touches_insurance_only` (per-side cross-category
+      preservation) and `consumeLienForResidual_targets_one_category`
+      (closed-world `BackingSource` enum: every typed lien hits
+      exactly one branch). The
+      `Spec14Aliases.lean::CloseLedger.bookSupport_does_not_touch_insuranceSpent`
+      family handles the field-level direction. *(Strengthened from
+      field-level to per-lien typed disjointness — see
+      AUDIT_2026-05-22.md.)*
+  #28 lien_creatable_predicate_requires_actual_bucket_or_insurance_reservation_capacity
+      Closed by `Spec14Aliases.lean::BackingBucket.lienCreatable_implies_capacity`
+      and `InsuranceReservation.lienCreatable_implies_capacity`.
+      These are the "predicate ⇒ capacity" direction of the cluster
+      5 iff theorems, named to match §14 #28's invariant.
+  #43 lien_creation_requires_required_backing_le_available_backing
+      Closed by
+      `Spec14Aliases.lean::BackingBucket.lienAgainst_requires_amount_le_available`
+      and `InsuranceReservation.lien_requires_capacity`. Extracts
+      the precondition of the lifecycle helpers as an explicit named
+      theorem.
+  #64 pending_obligation_credit_decrements_origin_residual_once
+      Closed by
+      `Spec14Aliases.lean::CloseLedger.pendingObligation_credit_decrements_origin_residual_once`
+      (the residual half of the atomic credit-debit pair) combined
+      with `bookSupport_no_pendingObligation_credit` and
+      `bookInsurance_no_pendingObligation_credit` showing no
+      sibling transition adds to the credit counter. Each credit is
+      therefore paired with exactly one residual decrement.
+
 Phase 5 cluster 6 §14 closures (conservation and reconciliation):
 
   #5  stock_reconciliation_holds_at_genesis_activation_mode_transition_and_recovery
@@ -403,13 +914,16 @@ Phase 5 cluster 6 §14 closures (conservation and reconciliation):
 Phase 5 cluster 4 §14 closures (close progress and priority):
 
   #46 close_drift_reserve_has_backed_loss_capacity_or_recovers
-      Closed by `CloseLedger.lean::closeDriftReserveBacked` predicate
-      and `continuationDecision` + `unbacked_routes_to_recovery`: a
-      close continuation is admitted iff the drift reserve is bounded
-      by the total of eligible support, domain insurance,
-      source-credit lien backing, B-booking headroom, and
-      deterministic recovery capacity; otherwise the decision returns
-      `false`, forcing recovery routing.
+      Closed by `EvenMoreStrengthening.lean::CloseLedger.continueOrRecover`
+      — a typed continuation outcome (`continued` or
+      `routedToRecovery`, no third path) bound to the
+      `closeDriftReserveBacked` predicate. Theorems:
+      `continueOrRecover_continued_implies_backed` (continuation
+      requires backing), `_unbacked_routes_recovery` (unbacked
+      routes), `_dichotomy` (closed-world). The predicate +
+      decision plumbing remain in `CloseLedger.lean`. *(Strengthened
+      from "predicate + abstract decision" to gated transition that
+      structurally types the dichotomy — see AUDIT_2026-05-22.md.)*
   #47 pulled_forward_obligation_credit_not_socialized_again
       Closed by `CloseLedger.lean::bookPendingObligation_credit_matches_debit`
       (atomic debit-equals-credit) plus the
@@ -446,11 +960,16 @@ Phase 5 cluster 4 §14 closures (close progress and priority):
       driftReferenceSlot, maxCloseSlot — is preserved by every
       lifecycle step.
   #71 bankrupt_close_progress_decreases_net_of_close_drift
-      Closed by `CloseLedger.lean::bookSupport_decreases_residual`
-      and siblings: every positive-amount booking strictly decreases
-      `residualRemaining`. The dual `addDrift_increases_residual`
-      witnesses the net direction — booking offsets drift atomically
-      within the same transition.
+      Closed by `StrengthenedClosures.lean::CloseLedger.applyMoves_residual_conservation`
+      (aggregate identity: `l'.residual + totalBookings = l.residual
+      + totalDrift` across an arbitrary sequence) plus
+      `applyMoves_residual_decreases_when_bookings_dominate` (net
+      non-strict decrease when bookings ≥ drift) and
+      `applyMoves_residual_strictly_decreases` (strict decrease when
+      bookings strictly exceed drift). The per-step
+      `CloseLedger.lean::bookSupport_decreases_residual` family is
+      the building block. *(Strengthened from per-step to aggregate
+      sequence — see AUDIT_2026-05-22.md.)*
   #72 cure_and_cancel_checks_before_consuming_new_deposit
       Closed by `CloseLedger.lean::cureAndCancel_requires_no_irreversible`
       (cure-and-cancel demands `hasIrreversibleProgress = false`)
@@ -495,7 +1014,21 @@ Phase 5 cluster 5 §14 closures (recovery + activation):
       in-instance proof type). `UIAggregate` is a separate, distinct
       type with no path into `AccountHealthWitness`. The §14 #58
       structural distinction is closed at the type level — analogous to
-      the §14 #87 closure pattern.
+      the §14 #87 closure pattern. Strengthened by
+      `MultiInstanceAggregation.lean`, which adds the concrete
+      multi-instance state the audit asked for: `InstanceSnapshot`
+      is the per-instance projection (instId, accountId, notional,
+      in-instance `healthProof`); `GlobalAccumulator.fromSnapshots`
+      sums across instances and *discards* per-account
+      `healthProof`s by design. The
+      `no_canonical_extractor_from_accumulator` theorem proves that
+      no total function `GlobalAccumulator → HealthProof` can
+      exist: two snapshots with distinct accountIds can produce
+      identical accumulators (`aggregator_collapses_distinct_accounts`),
+      so any extractor would have to equal two distinct
+      HealthProofs simultaneously — a contradiction.
+      *(Strengthened from abstract type-distinction to concrete
+      multi-instance state — see AUDIT_2026-05-22.md.)*
   #59 mutable_asset_activation_requires_full_envelope_proofs
       Closed by `Activation.lean::Activate.requires_full_envelope` plus
       the per-component witnesses `requires_priceOK` and
@@ -503,13 +1036,34 @@ Phase 5 cluster 5 §14 closures (recovery + activation):
       tags every envelope check (fee, price, funding, margin, OI,
       B-headroom, source-credit, close-progress, portfolio, recovery
       fallback); `Activate` cannot fire without `env.allValid = true`.
+      Strengthened by
+      `YetMoreStrengthening.lean::ActivationEnvelope.fromWitness`: each
+      flag is now derived from a concrete numerical `Witness` record
+      (fee paid/required, price age, funding accrued/due, margin
+      actual/required, OI cap, B-headroom, source-credit cap, close
+      progress, portfolio width, recovery backoff). The per-envelope
+      `fromWitness_*_false_when_*` lemmas show each flag is `false`
+      exactly when the underlying inequality is violated; the
+      `fromWitness_allValid_implies_*` lemmas decode `allValid` back
+      into the witness predicates. *(Strengthened from the abstract-
+      Bool closure that the audit flagged — see AUDIT_2026-05-22.md.)*
   #60 asset_cannot_activate_with_nonzero_or_unreconciled_state
       Closed by `Activation.lean::Activate.requires_zero_state` plus
       per-field corollaries (`requires_zero_legCount` /
       `_lienCount` / `_pendingObligationCount` /
       `_activeCloseCount` / `_backingHeldNum` /
       `_insuranceReservedNum`). The `Activate` constructor refuses to
-      step from a non-`isReconciledZero` state.
+      step from a non-`isReconciledZero` state. Strengthened by
+      `YetMoreStrengthening.lean::AssetSlotState.Reconciled`, which
+      pairs the slot with an independent `reconciliation` flag.
+      `Reconciled.fullyReconciled` requires *both* the zero counts
+      and the flag; `ActivateFull` is the activation transition over
+      the paired state. The counterfactual `unreconciledZero` (zero
+      counts, `reconciled = false`) is provably rejected
+      (`ActivateFull.unreconciled_zero_rejects_activation`), and
+      `reconciledEmpty` is the dual accepting witness. *(Strengthened
+      from a zero-only check to the "unreconciled-but-zero"
+      distinction the audit flagged — see AUDIT_2026-05-22.md.)*
   #61 activation_invalidates_or_scopes_certs_fail_closed
       Closed by `Activation.lean::activation_invalidates_priorEpoch_cert`
       and `activation_postCert_implies_bumped_epoch`. Certs are scoped
